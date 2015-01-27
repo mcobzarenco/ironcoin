@@ -1,5 +1,5 @@
 extern crate sodiumoxide;
-extern crate "rustc-serialize" as rustc_serialize;
+// extern crate "rustc-serialize" as rustc_serialize;
 
 use std::collections::HashMap;
 use std::vec;

@@ -51,7 +51,8 @@ impl BalanceStore for Store {
 
     fn set_balance(&mut self, balance: &Balance) -> Result<(), &str> {
         let encoded = json::encode(&balance);
-        let put_result = self.db.put(&balance.address[0..], encoded.as_bytes());
+        let put_result = self.db.put(&balance.address[0..],
+                                     encoded.unwrap().as_bytes());
         match put_result {
             Ok(()) => Ok(()),
             Err(msg) => Err(msg)

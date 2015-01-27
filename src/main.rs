@@ -1,4 +1,5 @@
 #![feature(slicing_syntax)]
+#![feature(unsafe_destructor)]
 #![allow(unstable)]
 extern crate getopts;
 extern crate sodiumoxide;
@@ -7,20 +8,27 @@ extern crate time;
 extern crate nanomsg;
 extern crate protobuf;
 
+mod balance;
+mod error;
+mod rpc;
+mod service;
+mod simples_pb;
+mod tx;
+
 use std::os;
 use std::sync::mpsc::{channel, Sender, Receiver};
+use std::time::duration::Duration;
+use std::io::timer::sleep;
 use std::thread::Thread;
-use nanomsg::{Socket, Protocol};
-use getopts::{optopt, optflag, getopts, OptGroup, usage};
-use rustc_serialize::json;
-use rustc_serialize::base64::{self, ToBase64};
-use sodiumoxide::crypto::sign::ed25519;
-use protobuf::text_format;
 
-mod tx;
-mod balance;
-mod ledger;
-mod simples_pb;
+use getopts::{optopt, optflag, getopts, OptGroup, usage};
+use nanomsg::{Socket, Protocol};
+use protobuf::Message;
+use protobuf::text_format;
+use sodiumoxide::crypto::sign::ed25519;
+
+use error::{SimplesError, SimplesResult};
+use service::{SimplesService};
 
 fn main2() {
     let (pk1, sk1) = ed25519::gen_keypair();
@@ -66,47 +74,76 @@ fn main2() {
 }
 
 fn do_staking(tx_receiver: Receiver<simples_pb::Transaction>) {
-    println!("Simples is configure to stake");
-    main2();
+    println!("Simples is configured to stake");
     loop {
         let tx = tx_receiver.recv().unwrap();
         println!("staker: {:?}", tx);
     }
 }
 
-fn rpc_server(endpoint_str: &str, tx_sender: Sender<simples_pb::Transaction>) {
-    let mut socket = Socket::new(Protocol::Rep).unwrap();
-    let mut endpoint = socket.bind(endpoint_str).unwrap();
-    println!("Simples is listening at {}", endpoint_str);
+struct TestService {
+    tx_sender: Sender<simples_pb::Transaction>,
+}
 
-    loop {
-        match socket.read_to_string() {
-            Ok(request) => {
-                match protobuf::parse_from_bytes(request.as_bytes()) {
-                    Ok(msg) => {
-                        println!("Recv {:?}.", msg);
-                        tx_sender.send(msg).unwrap();
-                    },
-                    Err(err) => {
-                        println!("Server failed to receive request '{:?}'.", err);
-                        let reply = format!("{:?}", err);
-                        match socket.write(reply.as_bytes()) {
-                            Ok(..) => {},
-                            Err(err) => {
-                                println!("Server failed to send reply '{:?}'.", err);
-                                break
-                            }
-                        }
-                    }
-                }
-            },
-            Err(err) => {
-                println!("Server failed to receive request '{}'.", err);
-                break
-            }
+impl service::SimplesService for TestService {
+    fn pub_transaction(
+        &mut self, request: simples_pb::PublishTransactionRequest) ->
+        SimplesResult<simples_pb::PublishTransactionResponse> {
+            println!("{:?}", request.get_transaction());
+            let response = simples_pb::PublishTransactionResponse::new();
+            Ok(response)
+            // tx_sender.send(msg).unwrap();
+            // let reply = format!("reply");
         }
+}
+
+fn send_test_transactions() {
+    let mut client = rpc::Client::new("tcp://127.0.0.1:13337").ok().unwrap();
+    let mut count = 1u32;
+    let sleep_duration = Duration::milliseconds(100);
+
+    let (pk1, sk1) = ed25519::gen_keypair();
+    let (pk2, sk2) = ed25519::gen_keypair();
+    loop {
+        let trans = tx::TransactionBuilder::new()
+            .add_transfer(&sk1, &pk1, &pk2, 1, 0)
+            .add_transfer(&sk2, &pk2, &pk1, 1, 0)
+            .add_transfer(&sk1, &pk1, &pk2,  1, 1)
+            .set_bounty(&sk1, &pk1, 1)
+            .build().unwrap();
+
+        let mut request = simples_pb::PublishTransactionRequest::new();
+        request.set_transaction(trans);
+
+        println!("Sending random transaction number {}.", count);
+        let response = client.pub_transaction(request).ok().unwrap();
+        println!("Got response");
+        println!("{:?}", response);
+
+        // request.set_method(simples_pb::RpcRequest_Method::PUBLISH_TRANSACTION);
+
+        // println!("getting bytes");
+        // let trans_bytes = request.write_to_bytes().unwrap();
+
+        // match socket.write(&trans_bytes[]) {
+        //     Ok(..) => println!("Sent transaction num {}.", count),
+        //     Err(err) => {
+        //         println!("Client failed to send request '{}'.", err);
+        //         break
+        //     }
+        // }
+
+        // match socket.read_to_string() {
+        //     Ok(reply) => println!("Recv '{}'.", reply.as_slice()),
+        //     Err(err) => {
+        //         println!("Client failed to receive reply '{}'.", err);
+        //         break
+        //     }
+        // }
+
+        sleep(sleep_duration);
+        count += 1;
     }
-    endpoint.shutdown();
 }
 
 fn print_usage(program: &str, opts: &[OptGroup]) {
@@ -114,13 +151,16 @@ fn print_usage(program: &str, opts: &[OptGroup]) {
     print!("{}", usage(brief.as_slice(), opts));
 }
 
+const DEFAULT_ENDPOINT:&'static str = "tcp://127.0.0.1:13337";
+
 fn main() {
-    let DEFAULT_ENDPOINT:String = String::from_str("tcp://127.0.0.1:13337");
     let args: Vec<String> = os::args();
     let program = args[0].clone();
     let opts = &[
         optflag("h", "help", "Show this help menu."),
-        optopt("b", "bind", "Endpoint where to bind.", "ENDPOINT")
+        optopt("b", "bind", "Endpoint where to bind.", "ENDPOINT"),
+        optflag("t", "", "Send random transactions."),
+        optflag("g", "", "Send random transactions.")
     ];
     let matches = match getopts(args.tail(), opts) {
         Ok(m) => { m }
@@ -134,12 +174,24 @@ fn main() {
         return;
     }
 
-    let rpc_endpoint = matches.opt_str("b").unwrap_or(DEFAULT_ENDPOINT);
+    let rpc_endpoint = matches.opt_str("b")
+        .unwrap_or(String::from_str(DEFAULT_ENDPOINT));
     let (tx_sender, tx_receiver) = channel();
-    let staking_thread = Thread::scoped(move || {
-        do_staking(tx_receiver);
-    });
-    let rpc_thread = Thread::scoped(move || {
-        rpc_server(&rpc_endpoint[], tx_sender);
-    });
+    let service = TestService { tx_sender: tx_sender };
+    let mut app = rpc::Application::new(&rpc_endpoint[], service)
+        .ok().unwrap();
+    if matches.opt_present("t") {
+        let client_thread = Thread::scoped(move || {
+            send_test_transactions();
+        });
+    } else {
+        // let staking_thread = Thread::scoped(move || {
+        //     do_staking(tx_receiver);
+        // });
+        let rpc_thread = Thread::scoped(move || {
+            app.run().map_err(|err| {
+                println!("App existed with error '{}'", err.description);
+            });
+        });
+    }
 }

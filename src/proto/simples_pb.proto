@@ -1,5 +1,7 @@
 package simples;
 
+/*****  Ledger Messages  *****/
+
 message Block {
     optional bytes hash = 1;
     optional bytes signature = 2;
@@ -41,4 +43,42 @@ message Transfer {
     optional uint64 tokens = 2;
     optional bytes source_pk = 3;
     optional bytes destination_pk = 4;
+}
+
+/*****  RPC Messages  *****/
+
+message RpcRequest {
+    enum Method {
+        INVALID = 0;
+        PUBLISH_TRANSACTION = 1;
+    }
+    optional Method method = 1;
+
+    optional PublishTransactionRequest pub_transaction = 2;
+}
+
+message RpcResponse {
+    enum Status {
+        INVALID = 0;
+        OK = 1;
+        INVALID_MESSAGE = 2;
+        INVALID_METHOD = 3;
+    }
+    optional Status status = 1;
+    optional string msg = 2;
+
+    optional PublishTransactionResponse pub_transaction = 3;
+}
+
+message PublishTransactionRequest {
+    optional Transaction transaction = 1;
+}
+
+message PublishTransactionResponse {
+    enum Status {
+        INVALID = 0;
+        OK = 1;
+        CRYPTO_ERROR = 2;
+    }
+    optional Status status = 1;
 }
