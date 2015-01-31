@@ -45,6 +45,17 @@ message Transfer {
     optional bytes destination_pk = 4;
 }
 
+message Wallet {
+    repeated WalletKey keys = 1;
+}
+
+message WalletKey {
+    optional bytes public_key = 1;
+    optional bytes secret_key = 2;
+    optional string name = 3;
+    optional string description = 4;
+}
+
 /*****  RPC Messages  *****/
 
 message RpcRequest {
@@ -65,7 +76,7 @@ message RpcResponse {
         INVALID_METHOD = 3;
     }
     optional Status status = 1;
-    optional string msg = 2;
+    optional string description = 2;
 
     optional PublishTransactionResponse pub_transaction = 3;
 }
@@ -78,7 +89,8 @@ message PublishTransactionResponse {
     enum Status {
         INVALID = 0;
         OK = 1;
-        CRYPTO_ERROR = 2;
+        INVALID_REQUEST = 2;
     }
     optional Status status = 1;
+    optional string description = 2;
 }
