@@ -3,35 +3,14 @@ use protobuf::{self, Message};
 use std::error::{FromError};
 
 use error::{SimplesError, SimplesResult};
-use service::{SimplesService};
-use simples_pb;
-
-impl FromError<nanomsg::NanoError> for SimplesError {
-    fn from_error(err: nanomsg::NanoError) -> SimplesError {
-        SimplesError { description: String::from_str(err.description) }
-    }
-}
+use service;
+use simples_pb::{self, PublishTransactionRequest, PublishTransactionResponse,
+                 PublishTransactionResponse_Status};
 
 pub struct Client {
     pub endpoint_str: String,
     endpoint: Endpoint,
     socket: Socket
-}
-
-impl Drop for Client {
-    fn drop(&mut self) { self.endpoint.shutdown().unwrap(); }
-}
-
-impl SimplesService for Client {
-    fn pub_transaction(&mut self, request: simples_pb::PublishTransactionRequest) ->
-        SimplesResult<simples_pb::PublishTransactionResponse>
-    {
-        let mut wrap_request = simples_pb::RpcRequest::new();
-        wrap_request.set_method(
-            simples_pb::RpcRequest_Method::PUBLISH_TRANSACTION);
-        self.dispatch(wrap_request)
-            .map(|mut response| response.take_pub_transaction())
-    }
 }
 
 impl Client {
@@ -44,7 +23,7 @@ impl Client {
         })
     }
 
-    fn dispatch(&mut self, mut request: simples_pb::RpcRequest) ->
+    fn dispatch(&mut self, request: simples_pb::RpcRequest) ->
         SimplesResult<simples_pb::RpcResponse>
     {
         let request_bytes = try!(request.write_to_bytes());
@@ -56,12 +35,29 @@ impl Client {
     }
 }
 
-pub struct Application<Service: SimplesService> {
+impl Drop for Client {
+    fn drop(&mut self) { self.endpoint.shutdown().unwrap(); }
+}
+
+impl service::Service for Client {
+    fn pub_transaction(&mut self, request: PublishTransactionRequest) ->
+        SimplesResult<PublishTransactionResponse>
+    {
+        let mut wrapped_request = simples_pb::RpcRequest::new();
+        wrapped_request.set_method(
+            simples_pb::RpcRequest_Method::PUBLISH_TRANSACTION);
+        wrapped_request.set_pub_transaction(request);
+        self.dispatch(wrapped_request)
+            .map(|mut response| response.take_pub_transaction())
+    }
+}
+
+pub struct Application<Service: service::Service> {
     pub endpoint_str: String,
     service: Service
 }
 
-impl<Service: SimplesService> Application<Service> {
+impl<Service: service::Service> Application<Service> {
     pub fn new(endpoint_str: &str, service: Service) ->
         SimplesResult<Application<Service>>
     {
@@ -115,7 +111,7 @@ impl<Service: SimplesService> Application<Service> {
                         }
                     };
                 let response_bytes = response.write_to_bytes().unwrap();
-                match socket.write(&response_bytes[]) {
+                match socket.write_all(&response_bytes[]) {
                     Ok(..) => (),
                     Err(err) => {
                         println!("[app loop] Failed to send response '{}'.",

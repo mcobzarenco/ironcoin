@@ -13,22 +13,30 @@ mod error;
 mod rpc;
 mod service;
 mod simples_pb;
+mod staking;
+mod store;
 mod tx;
+mod wallet;
 
+use std::error::{Error};
+use std::old_io::timer::sleep;
 use std::os;
+use std::str::FromStr;
 use std::sync::mpsc::{channel, Sender, Receiver};
-use std::time::duration::Duration;
-use std::io::timer::sleep;
 use std::thread::Thread;
+use std::time::duration::Duration;
+use std::vec;
 
-use getopts::{optopt, optflag, getopts, OptGroup, usage};
-use nanomsg::{Socket, Protocol};
+use getopts::{optopt, optflag, optflagopt, getopts, OptGroup, usage};
+use nanomsg::{Socket};
 use protobuf::Message;
 use protobuf::text_format;
+use rustc_serialize::base64::{self, FromBase64, ToBase64};
 use sodiumoxide::crypto::sign::ed25519;
 
 use error::{SimplesError, SimplesResult};
-use service::{SimplesService};
+use service::Service;
+use wallet::WalletExt;
 
 fn main2() {
     let (pk1, sk1) = ed25519::gen_keypair();
@@ -52,9 +60,6 @@ fn main2() {
     //     None => println!("Invalid signature.")
     // }
 
-    let store = balance::Store::new("state.rdb");
-    let mut cache = store.mutate();
-    cache.add_transaction(&trans).unwrap();
 
     // let db = RocksDB::open_default("test.rdb").unwrap();
     // db.put(b"my key2", b"das");
@@ -81,22 +86,6 @@ fn do_staking(tx_receiver: Receiver<simples_pb::Transaction>) {
     }
 }
 
-struct TestService {
-    tx_sender: Sender<simples_pb::Transaction>,
-}
-
-impl service::SimplesService for TestService {
-    fn pub_transaction(
-        &mut self, request: simples_pb::PublishTransactionRequest) ->
-        SimplesResult<simples_pb::PublishTransactionResponse> {
-            println!("{:?}", request.get_transaction());
-            let response = simples_pb::PublishTransactionResponse::new();
-            Ok(response)
-            // tx_sender.send(msg).unwrap();
-            // let reply = format!("reply");
-        }
-}
-
 fn send_test_transactions() {
     let mut client = rpc::Client::new("tcp://127.0.0.1:13337").ok().unwrap();
     let mut count = 1u32;
@@ -105,16 +94,22 @@ fn send_test_transactions() {
     let (pk1, sk1) = ed25519::gen_keypair();
     let (pk2, sk2) = ed25519::gen_keypair();
     loop {
-        let trans = tx::TransactionBuilder::new()
+        let mut trans = tx::TransactionBuilder::new()
             .add_transfer(&sk1, &pk1, &pk2, 1, 0)
-            .add_transfer(&sk2, &pk2, &pk1, 1, 0)
+            .add_transfer(&sk2, &pk2, &pk1, 10, 0)
             .add_transfer(&sk1, &pk1, &pk2,  1, 1)
             .set_bounty(&sk1, &pk1, 1)
             .build().unwrap();
+        println!("Len detached signs: {}", trans.get_signatures().len());
+        // trans.mut_signatures().pop();
+        // trans.mut_signatures().pop();
+        // println!("Len detached signs: {}", trans.get_signatures().len());
 
         let mut request = simples_pb::PublishTransactionRequest::new();
         request.set_transaction(trans);
 
+        println!("Req has transaction {}.",
+                 request.has_transaction());
         println!("Sending random transaction number {}.", count);
         let response = client.pub_transaction(request).ok().unwrap();
         println!("Got response");
@@ -156,11 +151,19 @@ const DEFAULT_ENDPOINT:&'static str = "tcp://127.0.0.1:13337";
 fn main() {
     let args: Vec<String> = os::args();
     let program = args[0].clone();
+    let daemon_description = format!(
+        "Daemonize, run simples in the background. Pass endpoint where
+        to bind (default={})", DEFAULT_ENDPOINT);
     let opts = &[
         optflag("h", "help", "Show this help menu."),
-        optopt("b", "bind", "Endpoint where to bind.", "ENDPOINT"),
-        optflag("t", "", "Send random transactions."),
-        optflag("g", "", "Send random transactions.")
+        optflagopt("d", "", &daemon_description[], "ENDPOINT"),
+        optflag("", "test", "Send random transactions."),
+        optopt("f", "", "Load wallet file.", "FILE"),
+        optopt("t", "", "Specify a transfer.", "SRC:DEST:AMOUNT:OP_NUM"),
+        optopt("", "new", "Create and add a new address to the wallet.",
+               "[NAME[:DESC]]"),
+        optflagopt("", "ls", "List all addresses contained by the wallet.",
+               "[PATTERN]"),
     ];
     let matches = match getopts(args.tail(), opts) {
         Ok(m) => { m }
@@ -174,24 +177,91 @@ fn main() {
         return;
     }
 
-    let rpc_endpoint = matches.opt_str("b")
+    let rpc_endpoint = matches.opt_str("d")
         .unwrap_or(String::from_str(DEFAULT_ENDPOINT));
-    let (tx_sender, tx_receiver) = channel();
-    let service = TestService { tx_sender: tx_sender };
-    let mut app = rpc::Application::new(&rpc_endpoint[], service)
-        .ok().unwrap();
-    if matches.opt_present("t") {
+    let mut wallet = simples_pb::Wallet::new();
+    if matches.opt_present("test") {
         let client_thread = Thread::scoped(move || {
             send_test_transactions();
         });
-    } else {
+    }
+    if matches.opt_present("f") {
+        let wallet_file = matches.opt_str("f").unwrap();
+        println!("Reading wallet from file: {}", wallet_file);
+        wallet = wallet::load_from_file(&wallet_file[]).unwrap();
+
+        if matches.opt_present("new") {
+            let name_desc_str = matches.opt_str("new").unwrap();
+            let name_desc:Vec<&str> = name_desc_str.split_str(":").collect();
+            if name_desc.len() != 2 {
+                println!("Specify [NAME:[DESCRIPTION]] for the new address.");
+                return;
+            }
+            let key = wallet.generate_new_key(name_desc[0], name_desc[1]);
+            println!("Created new address: {}",
+                     key.get_public_key().to_base64(base64::STANDARD));
+            wallet::save_to_file(&wallet_file[], &wallet).unwrap()
+        }
+        if matches.opt_present("ls") {
+            let pattern = matches.opt_str("ls").unwrap_or(String::new());
+            if &pattern[] != "" {
+                let _: Vec<()> = wallet.get_keys_by_name(&pattern[]).iter()
+                    .map(|wkey| { println!("{}", wallet::pretty_format(*wkey)); })
+                    .collect();
+            } else {
+                let _: Vec<()> = wallet.get_keys().iter().map(
+                    |wkey| println!("{}", wallet::pretty_format(wkey))).collect();
+            }
+        }
+    }
+    if matches.opt_present("t") {
+        let transfer_str = matches.opt_str("t").unwrap();
+        let transfer_parts: Vec<&str> = transfer_str.split_str(":").collect();
+        if transfer_parts.len() != 4 {
+            println!("You need to specify the transfer you wish
+ to make as SOURCE:DESTINATION:AMOUNT:OP_NUM.");
+            return;
+        };
+
+        let source = transfer_parts[0].from_base64().unwrap();
+        let destination = transfer_parts[1].from_base64().unwrap();
+        let amount: u64 = FromStr::from_str(transfer_parts[2]).unwrap();
+        let op_number: u32 = FromStr::from_str(transfer_parts[3]).unwrap();
+
+        let source_key: Vec<&simples_pb::WalletKey> = wallet.get_keys().iter()
+            .filter(|wkey| wkey.get_public_key() == source).collect();
+        if source_key.len() == 0 {
+            println!("The wallet doesn't have the secret key for source address {}",
+                     transfer_parts[0]);
+            return;
+        }
+        let secret_key = source_key[0].get_secret_key();
+        let transaction = tx::TransactionBuilder::new()
+            .add_transfer(&tx::slice_to_sk(secret_key).unwrap(),
+                          &tx::slice_to_pk(&source[]).unwrap(),
+                          &tx::slice_to_pk(&destination[]).unwrap(),
+                          amount, op_number)
+            .set_bounty(&tx::slice_to_sk(secret_key).unwrap(),
+                        &tx::slice_to_pk(&source[]).unwrap(), 1)
+            .build().unwrap();
+
+        let mut client = rpc::Client::new("tcp://127.0.0.1:13337").ok().unwrap();
+        let mut request = simples_pb::PublishTransactionRequest::new();
+        request.set_transaction(transaction);
+        let response = client.pub_transaction(request).ok().unwrap();
+        println!("Response status: {:?}", response);
+    }
+    if matches.opt_present("d") {
         // let staking_thread = Thread::scoped(move || {
         //     do_staking(tx_receiver);
         // });
         let rpc_thread = Thread::scoped(move || {
+            let service = service::SimplesService::new("balance.rdb").unwrap();
+            let mut app =
+                rpc::Application::new(&rpc_endpoint[], service).unwrap();
             app.run().map_err(|err| {
-                println!("App existed with error '{}'", err.description);
-            });
+                println!("App existed with error '{}'", err.description());
+            }).unwrap();
         });
     }
 }
