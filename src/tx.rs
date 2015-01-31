@@ -1,5 +1,4 @@
 extern crate sodiumoxide;
-// extern crate "rustc-serialize" as rustc_serialize;
 
 use std::collections::HashMap;
 use std::vec;
@@ -9,13 +8,22 @@ use sodiumoxide::crypto::sign::ed25519::{
 use protobuf::Message;
 use simples_pb;
 
-fn slice_to_pk(bytes: &[u8]) -> Option<PublicKey> {
+pub fn slice_to_pk(bytes: &[u8]) -> Option<PublicKey> {
     if bytes.len() != PUBLICKEYBYTES { return None; }
     let mut key:[u8; PUBLICKEYBYTES] = [0; PUBLICKEYBYTES];
     for i in range(0, PUBLICKEYBYTES) {
         key[i] = bytes[i];
     }
     Some(PublicKey(key))
+}
+
+pub fn slice_to_sk(bytes: &[u8]) -> Option<SecretKey> {
+    if bytes.len() != SECRETKEYBYTES { return None; }
+    let mut key:[u8; SECRETKEYBYTES] = [0; SECRETKEYBYTES];
+    for i in range(0, SECRETKEYBYTES) {
+        key[i] = bytes[i];
+    }
+    Some(SecretKey(key))
 }
 
 fn hash_message<M: Message>(obj: &M) -> Vec<u8> {
