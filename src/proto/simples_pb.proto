@@ -34,8 +34,7 @@ message DetachedSignature {
 
 message Transaction {
     repeated DetachedSignature signatures = 1;
-    optional bytes commit_hash = 2;
-    optional Commitment commit = 3;
+    optional Commitment commit = 2;
 }
 
 message Transfer {
