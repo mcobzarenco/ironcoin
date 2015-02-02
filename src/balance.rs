@@ -1,13 +1,14 @@
 use std::collections::hash_map::{self, HashMap};
-use std::error::{self, FromError};
+use std::error::FromError;
 use std::vec;
 
 use rustc_serialize::json;
+use rustc_serialize::base64::{self, ToBase64};
 
-use error::{SimplesError, SimplesResult};
-use tx::{self, Transaction};
-use store::{KeyValueStore, RocksStore};
+use error::SimplesResult;
 use simples_pb;
+use store::KeyValueStore;
+use tx::Transaction;
 
 #[derive(Default, Clone, Eq, PartialEq, Show, RustcEncodable, RustcDecodable)]
 struct Balance {
@@ -122,7 +123,7 @@ impl<'a, Store: 'a + BalanceStoreTrait> TransactionCache<'a, Store> {
     }
 
     pub fn flush(&mut self) -> SimplesResult<()> {
-        for (address, balance) in self.cache.iter() {
+        for balance in self.cache.values() {
             try!(self.store.set_balance(balance));
         }
         self.clear();

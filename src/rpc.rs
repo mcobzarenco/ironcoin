@@ -1,11 +1,12 @@
-use nanomsg::{self, Endpoint, Protocol, Socket};
+use nanomsg::{Endpoint, Protocol, Socket};
 use protobuf::{self, Message};
-use std::error::{FromError};
+use std::error::FromError;
 
-use error::{SimplesError, SimplesResult};
+use error::{SimplesResult};
 use service;
-use simples_pb::{self, PublishTransactionRequest, PublishTransactionResponse,
-                 PublishTransactionResponse_Status};
+use simples_pb::{
+    self, RpcRequest, RpcRequest_Method, RpcResponse, RpcResponse_Status,
+    PublishTransactionRequest, PublishTransactionResponse};
 
 pub struct Client {
     pub endpoint_str: String,
@@ -23,14 +24,11 @@ impl Client {
         })
     }
 
-    fn dispatch(&mut self, request: simples_pb::RpcRequest) ->
-        SimplesResult<simples_pb::RpcResponse>
-    {
+    fn dispatch(&mut self, request: RpcRequest) -> SimplesResult<RpcResponse> {
         let request_bytes = try!(request.write_to_bytes());
-        try!(self.socket.write(&request_bytes[]));
+        try!(self.socket.write_all(&request_bytes[]));
 
         let response_bytes = try!(self.socket.read_to_end());
-        println!("{:?}", response_bytes);
         Ok(try!(protobuf::parse_from_bytes(&response_bytes[])))
     }
 }
@@ -43,9 +41,8 @@ impl service::Service for Client {
     fn pub_transaction(&mut self, request: PublishTransactionRequest) ->
         SimplesResult<PublishTransactionResponse>
     {
-        let mut wrapped_request = simples_pb::RpcRequest::new();
-        wrapped_request.set_method(
-            simples_pb::RpcRequest_Method::PUBLISH_TRANSACTION);
+        let mut wrapped_request = RpcRequest::new();
+        wrapped_request.set_method(RpcRequest_Method::PUBLISH_TRANSACTION);
         wrapped_request.set_pub_transaction(request);
         self.dispatch(wrapped_request)
             .map(|mut response| response.take_pub_transaction())
@@ -67,20 +64,16 @@ impl<Service: service::Service> Application<Service> {
         })
     }
 
-    fn dispatch(&mut self, mut request: simples_pb::RpcRequest) ->
-        simples_pb::RpcResponse
-    {
-        let mut response = simples_pb::RpcResponse::new();
+    fn dispatch(&mut self, mut request: RpcRequest) -> RpcResponse {
+        let mut response = RpcResponse::new();
         match request.get_method() {
-            simples_pb::RpcRequest_Method::INVALID => {
+            RpcRequest_Method::INVALID => {
                 println!("Peer tried to call invalid method.");
-                response.set_status(
-                    simples_pb::RpcResponse_Status::INVALID_METHOD);
+                response.set_status(RpcResponse_Status::INVALID_METHOD);
                 response
             },
-            simples_pb::RpcRequest_Method::PUBLISH_TRANSACTION => {
-                response.set_status(
-                    simples_pb::RpcResponse_Status::OK);
+            RpcRequest_Method::PUBLISH_TRANSACTION => {
+                response.set_status(RpcResponse_Status::OK);
                 response.set_pub_transaction(
                     self.service.pub_transaction(
                         request.take_pub_transaction()).ok().unwrap());
@@ -126,7 +119,6 @@ impl<Service: service::Service> Application<Service> {
             }
         } // match
         } // loop
-
         try!(endpoint.shutdown());
     }
 }
