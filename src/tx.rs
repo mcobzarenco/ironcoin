@@ -2,10 +2,13 @@ extern crate sodiumoxide;
 
 use std::collections::HashMap;
 use std::vec;
+
 use sodiumoxide::crypto::hash::sha512;
 use sodiumoxide::crypto::sign::ed25519::{
-    self, PublicKey, SecretKey, PUBLICKEYBYTES, SECRETKEYBYTES};
+    self, PublicKey, SecretKey, PUBLICKEYBYTES, SECRETKEYBYTES,
+    Signature, SIGNATUREBYTES, sign_detached, verify_detached};
 use protobuf::Message;
+
 use simples_pb;
 
 pub fn slice_to_pk(bytes: &[u8]) -> Option<PublicKey> {
@@ -26,6 +29,15 @@ pub fn slice_to_sk(bytes: &[u8]) -> Option<SecretKey> {
     Some(SecretKey(key))
 }
 
+pub fn slice_to_signature(bytes: &[u8]) -> Option<Signature> {
+    if bytes.len() != SIGNATUREBYTES { return None; }
+    let mut sign:[u8; SIGNATUREBYTES] = [0; SIGNATUREBYTES];
+    for i in range(0, SIGNATUREBYTES) {
+        sign[i] = bytes[i];
+    }
+    Some(Signature(sign))
+}
+
 fn hash_message<M: Message>(obj: &M) -> Vec<u8> {
     let bytes = &obj.write_to_bytes().unwrap()[];
     let sha512::Digest(commit_hash) = sha512::hash(&bytes[]);
@@ -38,25 +50,18 @@ pub trait Transaction {
 
 impl Transaction for simples_pb::Transaction {
     fn check_signatures(&self) -> Result<(), &'static str> {
-        let commit_hash = hash_message(self.get_commit());
-        if commit_hash[] != self.get_commit_hash()[] {
-            return Err("Invalid hash.");
-        }
+        let commit_bytes = &self.get_commit().write_to_bytes().unwrap()[];
         let mut sign_map = HashMap::<&[u8], &[u8]>::new();
         for sign in self.get_signatures().iter() {
             sign_map.insert(sign.get_public_key(), sign.get_payload());
         }
         for transfer in self.get_commit().get_transfers().iter() {
             match sign_map.get(transfer.get_source_pk()) {
-                Some(signature) => {
+                Some(sign_bytes) => {
                     let pk = slice_to_pk(transfer.get_source_pk()).unwrap();
-                    match ed25519::verify(&signature[], &pk) {
-                        Some(hash) => {
-                            if commit_hash[] != hash[] {
-                                return Err("The incorrect hash is signed.")
-                            }
-                        },
-                        None => return Err("Invalid signature.")
+                    let signature = slice_to_signature(&sign_bytes[]).unwrap();
+                    if !verify_detached(&signature, commit_bytes, &pk) {
+                        return Err("Invalid signature.")
                     }
                 },
                 None => return Err("Missing key.")
@@ -83,8 +88,8 @@ impl TransactionBuilder {
     }
 
     pub fn add_transfer(
-        mut self, sk: &SecretKey, source: &PublicKey, destination: &PublicKey,
-        tokens: u64, op_index:u32) -> TransactionBuilder {
+        &mut self, sk: &SecretKey, source: &PublicKey, destination: &PublicKey,
+        tokens: u64, op_index:u32) -> &mut Self {
         let mut transfer = simples_pb::Transfer::new();
         transfer.set_op_index(op_index);
         transfer.set_tokens(tokens);
@@ -96,8 +101,8 @@ impl TransactionBuilder {
         self
     }
 
-    pub fn set_bounty(mut self, sk: &SecretKey, source: &PublicKey,
-                      bounty: u64) -> TransactionBuilder {
+    pub fn set_bounty(&mut self, sk: &SecretKey, source: &PublicKey,
+                      bounty: u64) -> &mut Self {
         self.bounty_secret_key = Some(sk.clone());
         self.commit.mut_bounty_pk().push_all(&source.0);
         self.commit.set_bounty(bounty);
@@ -105,33 +110,26 @@ impl TransactionBuilder {
     }
 
     pub fn build(self) -> Result<simples_pb::Transaction, &'static str> {
-        let commit_hash = hash_message(&self.commit);
         let mut transaction = simples_pb::Transaction::new();
+        let commit_bytes = &self.commit.write_to_bytes().unwrap()[];
+        for (transfer, sk) in self.commit.get_transfers().iter()
+            .zip(self.transfer_secret_keys.iter())
         {
-            let mut signatures = transaction.mut_signatures();
-            let mut transfers_and_skeys = self.commit.get_transfers().iter()
-                .zip(self.transfer_secret_keys.iter());
-
-            for (transfer, sk) in transfers_and_skeys {
-                let signature: Vec<u8> = ed25519::sign(&commit_hash[], sk);
-                let pk_bytes = vec::as_vec(transfer.get_source_pk()).clone();
-                let pk = slice_to_pk(&pk_bytes[]).unwrap();
-                match ed25519::verify(&signature[0..], &pk) {
-                    Some(_) => {
-                        let mut sign = simples_pb::DetachedSignature::new();
-                        sign.set_public_key(pk_bytes);
-                        sign.set_payload(signature);
-                        signatures.push(sign);
-                    },
-                    None => return Err("Invalid key for source account.")
-                }
+            let signature = sign_detached(commit_bytes, sk);
+            let pk_bytes = vec::as_vec(transfer.get_source_pk()).clone();
+            let pk = slice_to_pk(&pk_bytes[]).unwrap();
+            match verify_detached(&signature, commit_bytes, &pk) {
+                true => {
+                    let mut sign = simples_pb::DetachedSignature::new();
+                    sign.set_public_key(pk_bytes);
+                    sign.set_payload(signature.0.to_vec());
+                    transaction.mut_signatures().push(sign);
+                },
+                false => return Err("Invalid key for source account.")
             }
         }
         transaction.set_commit(self.commit);
-        transaction.set_commit_hash(commit_hash.clone());
-        match transaction.check_signatures() {
-            Ok(_) => Ok(transaction),
-            Err(msg) => Err(msg)
-        }
+        try!(transaction.check_signatures());
+        Ok(transaction)
     }
 }
