@@ -52,7 +52,7 @@ pub fn pretty_format(wallet_key: &WalletKey) -> String {
 pub trait WalletExt {
     fn generate_new_key(
         &mut self, name: &str, description: &str) -> WalletKey;
-    fn get_keys_by_name(&self, search_str: &str) -> Vec<&WalletKey>;
+    fn search_keys(&self, search_str: &str) -> Vec<&WalletKey>;
 }
 
 impl WalletExt for Wallet {
@@ -70,14 +70,14 @@ impl WalletExt for Wallet {
         copy
     }
 
-    fn get_keys_by_name(&self, search_str: &str) -> Vec<&WalletKey> {
-        let mut keys = Vec::<&WalletKey>::new();
+    fn search_keys(&self, search_str: &str) -> Vec<&WalletKey> {
         self.get_keys().iter()
             .filter(|wkey| {
                 let name = &wkey.get_name()[];
-                let matches: Vec<(usize, usize)> =
-                    name.match_indices(search_str).collect();
-                matches.len() > 0
+                let pk_base64 = wkey.get_public_key()
+                    .to_base64(base64::STANDARD);
+                name.starts_with(search_str) ||
+                    pk_base64.starts_with(search_str)
             }).collect()
     }
 }
