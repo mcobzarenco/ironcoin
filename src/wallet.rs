@@ -1,5 +1,4 @@
-use std::old_io::{File, Open, Read, Write, ReadWrite};
-use std::vec;
+use std::old_io::{File};
 
 use protobuf;
 use rustc_serialize::base64::{self, ToBase64};
@@ -21,7 +20,7 @@ fn save_proto_to_file<Message: protobuf::MessageStatic>(
 {
     let mut proto_out = File::create(&Path::new(path));
     let wallet_bytes = try!(msg.write_to_bytes());
-    Ok(try!(proto_out.write(&wallet_bytes[])))
+    Ok(try!(proto_out.write_all(&wallet_bytes[])))
 }
 
 pub fn load_from_file(path: &str) -> SimplesResult<Wallet> {
