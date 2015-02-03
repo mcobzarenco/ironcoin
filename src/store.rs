@@ -4,7 +4,7 @@ use std::error::{FromError};
 use std::ops::Deref;
 use std::vec;
 
-use protobuf;
+use protobuf::{self, MessageStatic};
 use self::rocksdb::{RocksDB, RocksDBResult};
 
 use error::{SimplesError, SimplesResult};
@@ -46,23 +46,26 @@ impl KeyValueStore for RocksStore {
     }
 }
 
-struct ProtoStore<Store: KeyValueStore> {
-    kv_store: Store
+pub struct ProtoStore<Store: KeyValueStore> {
+    pub kv_store: Store
 }
 
 impl<Store: KeyValueStore> ProtoStore<Store> {
-    fn get<Value: protobuf::MessageStatic>
-        (&self, key: &[u8]) -> SimplesResult<Option<Value>> {
-        let get_result = try!(self.kv_store.get_bytes(key));
-        Ok(match get_result {
+    pub fn new(kv_store: Store) -> Self { ProtoStore { kv_store: kv_store } }
+
+    pub fn get<Message: MessageStatic>
+        (&self, key: &[u8]) -> SimplesResult<Option<Message>>
+    {
+        Ok(match try!(self.kv_store.get_bytes(key)) {
             Some(bytes) => Some(try!(protobuf::parse_from_bytes(&bytes[]))),
             None => None
         })
     }
 
-    fn set<Value: protobuf::MessageStatic>
-        (&mut self, key: &[u8], value: &Value) -> SimplesResult<()> {
-        let encoded = try!(value.write_to_bytes());
-        Ok(try!(self.kv_store.set_bytes(key, &encoded[])))
+    pub fn set<Message: MessageStatic>
+        (&mut self, key: &[u8], message: &Message) -> SimplesResult<()>
+    {
+        let msg_bytes = &try!(message.write_to_bytes())[];
+        Ok(try!(self.kv_store.set_bytes(key, msg_bytes)))
     }
 }
