@@ -2,18 +2,23 @@ package simples;
 
 /*****  Ledger Messages  *****/
 
-message Block {
+message HashedBlock {
     optional bytes hash = 1;
-    optional bytes signature = 2;
-
-    optional BlockBody body = 3;
+    optional SignedBlock signed_block = 2;
 }
 
-message BlockBody {
-    optional bytes staker_pk = 1;
-    optional int64 timestamp = 2;
+message SignedBlock {
+    optional bytes signature = 1;
+    optional Block block = 2;
+}
 
-    repeated Transaction transactions = 3;
+message Block {
+    optional bytes staker_pk = 1;
+    optional bytes previous_block = 2;
+    optional int64 timestamp = 3;
+    optional bytes target_hash = 4;
+
+    repeated Transaction transactions = 5;
 }
 
 message Commitment {
