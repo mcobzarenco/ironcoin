@@ -1,42 +1,11 @@
-extern crate sodiumoxide;
-
 use std::collections::HashMap;
 use std::vec;
 
-use sodiumoxide::crypto::hash::sha512;
-use sodiumoxide::crypto::sign::ed25519::{
-    self, PublicKey, SecretKey, PUBLICKEYBYTES, SECRETKEYBYTES,
-    Signature, SIGNATUREBYTES, sign_detached, verify_detached};
 use protobuf::Message;
 
+use crypto::{PublicKey, SecretKey, sign_slice, slice_to_signature, slice_to_pk,
+             verify_signature};
 use simples_pb;
-
-pub fn slice_to_pk(bytes: &[u8]) -> Option<PublicKey> {
-    if bytes.len() != PUBLICKEYBYTES { return None; }
-    let mut key:[u8; PUBLICKEYBYTES] = [0; PUBLICKEYBYTES];
-    for i in range(0, PUBLICKEYBYTES) {
-        key[i] = bytes[i];
-    }
-    Some(PublicKey(key))
-}
-
-pub fn slice_to_sk(bytes: &[u8]) -> Option<SecretKey> {
-    if bytes.len() != SECRETKEYBYTES { return None; }
-    let mut key:[u8; SECRETKEYBYTES] = [0; SECRETKEYBYTES];
-    for i in range(0, SECRETKEYBYTES) {
-        key[i] = bytes[i];
-    }
-    Some(SecretKey(key))
-}
-
-pub fn slice_to_signature(bytes: &[u8]) -> Option<Signature> {
-    if bytes.len() != SIGNATUREBYTES { return None; }
-    let mut sign:[u8; SIGNATUREBYTES] = [0; SIGNATUREBYTES];
-    for i in range(0, SIGNATUREBYTES) {
-        sign[i] = bytes[i];
-    }
-    Some(Signature(sign))
-}
 
 pub trait Transaction {
     fn check_signatures(&self) -> Result<(), &'static str>;
@@ -54,7 +23,7 @@ impl Transaction for simples_pb::Transaction {
                 Some(sign_bytes) => {
                     let pk = slice_to_pk(transfer.get_source_pk()).unwrap();
                     let signature = slice_to_signature(&sign_bytes[]).unwrap();
-                    if !verify_detached(&signature, commit_bytes, &pk) {
+                    if !verify_signature(&pk, commit_bytes, &signature) {
                         return Err("Invalid signature.")
                     }
                 },
@@ -106,13 +75,13 @@ impl TransactionBuilder {
     pub fn build(self) -> Result<simples_pb::Transaction, &'static str> {
         let mut transaction = simples_pb::Transaction::new();
         let commit_bytes = &self.commit.write_to_bytes().unwrap()[];
-        for (transfer, sk) in self.commit.get_transfers().iter()
+        for (transfer, secret_key) in self.commit.get_transfers().iter()
             .zip(self.transfer_secret_keys.iter())
         {
-            let signature = sign_detached(commit_bytes, sk);
+            let signature = sign_slice(secret_key, commit_bytes);
             let pk_bytes = vec::as_vec(transfer.get_source_pk()).clone();
             let pk = slice_to_pk(&pk_bytes[]).unwrap();
-            match verify_detached(&signature, commit_bytes, &pk) {
+            match verify_signature(&pk, commit_bytes, &signature) {
                 true => {
                     let mut sign = simples_pb::DetachedSignature::new();
                     sign.set_public_key(pk_bytes);

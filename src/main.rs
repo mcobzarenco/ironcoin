@@ -1,5 +1,4 @@
 #![feature(slicing_syntax)]
-#![feature(unsafe_destructor)]
 #![allow(unstable)]
 extern crate getopts;
 extern crate sodiumoxide;
@@ -9,6 +8,8 @@ extern crate nanomsg;
 extern crate protobuf;
 
 mod balance;
+mod block;
+mod crypto;
 mod error;
 mod rpc;
 mod service;
@@ -22,69 +23,18 @@ use std::error::{Error};
 use std::old_io::timer::sleep;
 use std::os;
 use std::str::FromStr;
-use std::sync::mpsc::{channel, Sender, Receiver};
+use std::sync::mpsc::{Sender, Receiver};
 use std::thread::Thread;
 use std::time::duration::Duration;
 use std::vec;
 
-use getopts::{optopt, optflag, optflagopt, getopts, OptGroup, usage};
-use nanomsg::{Socket};
-use protobuf::Message;
-use protobuf::text_format;
-use rustc_serialize::base64::{self, FromBase64, ToBase64};
+use getopts::{optopt, optflag, optflagopt, getopts, optmulti, OptGroup, usage};
+use rustc_serialize::base64::{self, ToBase64};
 use sodiumoxide::crypto::sign::ed25519;
 
-use error::{SimplesError, SimplesResult};
+use crypto::{slice_to_pk, slice_to_sk};
 use service::Service;
 use wallet::WalletExt;
-
-fn main2() {
-    let (pk1, sk1) = ed25519::gen_keypair();
-    let (pk2, sk2) = ed25519::gen_keypair();
-
-    let trans = tx::TransactionBuilder::new()
-        .add_transfer(&sk1, &pk1, &pk2, 98, 0)
-        .add_transfer(&sk2, &pk2, &pk1, 10, 0)
-        .add_transfer(&sk1, &pk1, &pk2,  1, 1)
-        .set_bounty(&sk1, &pk1, 1)
-        .build().unwrap();
-
-    let encoded:String = text_format::print_to_string(&trans);
-    // println!("encoded: {:?}", encoded.as_bytes().to_base64(base64::STANDARD));
-    println!("encoded: {:?}", encoded);
-
-    // let sm:Vec<u8> = crypto::sign::ed25519::sign(b"ma-ta", &sk);
-    // match crypto::sign::ed25519::verify(sm.as_slice(), &pk) {
-    //     Some(m) =>
-    //         println!("Valid signature: {} ", String::from_utf8(m).unwrap()),
-    //     None => println!("Invalid signature.")
-    // }
-
-
-    // let db = RocksDB::open_default("test.rdb").unwrap();
-    // db.put(b"my key2", b"das");
-    // db.get(b"my key")
-    //     .map(|value| {
-    //         println!("retrieved value: {}", value.to_utf8().unwrap());
-    //     })
-    //     .on_absent( || { println!("value not found") })
-    //     .on_error( |e| { println!("operational problem encountered: {}", e) });
-
-    // db.close();
-
-    // println!("us: {}", us.as_slice().to_base64(base64::STANDARD));
-    // println!("pk, sk: {}, {}",
-    //          pk1.as_slice().to_base64(base64::STANDARD),
-    //          sk1.as_slice().to_base64(base64::STANDARD));
-}
-
-fn do_staking(tx_receiver: Receiver<simples_pb::Transaction>) {
-    println!("Simples is configured to stake");
-    loop {
-        let tx = tx_receiver.recv().unwrap();
-        println!("staker: {:?}", tx);
-    }
-}
 
 fn send_test_transactions() {
     let mut client = rpc::Client::new("tcp://127.0.0.1:13337").ok().unwrap();
@@ -94,12 +44,13 @@ fn send_test_transactions() {
     let (pk1, sk1) = ed25519::gen_keypair();
     let (pk2, sk2) = ed25519::gen_keypair();
     loop {
-        let mut trans = tx::TransactionBuilder::new()
+        let mut tx_builder = tx::TransactionBuilder::new();
+        tx_builder
             .add_transfer(&sk1, &pk1, &pk2, 1, 0)
             .add_transfer(&sk2, &pk2, &pk1, 10, 0)
             .add_transfer(&sk1, &pk1, &pk2,  1, 1)
-            .set_bounty(&sk1, &pk1, 1)
-            .build().unwrap();
+            .set_bounty(&sk1, &pk1, 1);
+        let trans = tx_builder.build().unwrap();
         println!("Len detached signs: {}", trans.get_signatures().len());
         // trans.mut_signatures().pop();
         // trans.mut_signatures().pop();
@@ -159,7 +110,7 @@ fn main() {
         optflagopt("d", "", &daemon_description[], "ENDPOINT"),
         optflag("", "test", "Send random transactions."),
         optopt("f", "", "Load wallet file.", "FILE"),
-        optopt("t", "", "Specify a transfer.", "SRC:DEST:AMOUNT:OP_NUM"),
+        optmulti("t", "", "Specify a transfer.", "SRC:DEST:AMOUNT:OP_NUM"),
         optopt("", "new", "Create and add a new address to the wallet.",
                "[NAME[:DESC]]"),
         optflagopt("", "ls", "List all addresses contained by the wallet.",
@@ -181,7 +132,7 @@ fn main() {
         .unwrap_or(String::from_str(DEFAULT_ENDPOINT));
     let mut wallet = simples_pb::Wallet::new();
     if matches.opt_present("test") {
-        let client_thread = Thread::scoped(move || {
+        Thread::scoped(move || {
             send_test_transactions();
         });
     }
@@ -205,7 +156,7 @@ fn main() {
         if matches.opt_present("ls") {
             let pattern = matches.opt_str("ls").unwrap_or(String::new());
             if &pattern[] != "" {
-                let _: Vec<()> = wallet.get_keys_by_name(&pattern[]).iter()
+                let _: Vec<()> = wallet.search_keys(&pattern[]).iter()
                     .map(|wkey| { println!("{}", wallet::pretty_format(*wkey)); })
                     .collect();
             } else {
@@ -215,36 +166,55 @@ fn main() {
         }
     }
     if matches.opt_present("t") {
-        let transfer_str = matches.opt_str("t").unwrap();
-        let transfer_parts: Vec<&str> = transfer_str.split_str(":").collect();
-        if transfer_parts.len() != 4 {
-            println!("You need to specify the transfer you wish
+        let mut tx_builder = tx::TransactionBuilder::new();
+        for transfer_str in matches.opt_strs("t").iter() {
+            let transfer_parts: Vec<&str> =
+                transfer_str.split_str(":").collect();
+            if transfer_parts.len() != 4 {
+                println!("You need to specify the transfer you wish
  to make as SOURCE:DESTINATION:AMOUNT:OP_NUM.");
             return;
-        };
+            };
 
-        let source = transfer_parts[0].from_base64().unwrap();
-        let destination = transfer_parts[1].from_base64().unwrap();
-        let amount: u64 = FromStr::from_str(transfer_parts[2]).unwrap();
-        let op_number: u32 = FromStr::from_str(transfer_parts[3]).unwrap();
+            let source = transfer_parts[0];
+            let destination = transfer_parts[1];
+            let amount: u64 = FromStr::from_str(transfer_parts[2]).unwrap();
+            let op_number: u32 = FromStr::from_str(transfer_parts[3]).unwrap();
 
-        let source_key: Vec<&simples_pb::WalletKey> = wallet.get_keys().iter()
-            .filter(|wkey| wkey.get_public_key() == source).collect();
-        if source_key.len() == 0 {
-            println!("The wallet doesn't have the secret key for source address {}",
-                     transfer_parts[0]);
-            return;
+            let source_keys = wallet.search_keys(&source[]);
+            let destination_keys = wallet.search_keys(&destination[]);
+            if source_keys.len() == 0 {
+                println!(
+                    "The wallet doesn't contain the source address \"{}\"",
+                    source);
+                return;
+            } else if destination_keys.len() == 0{
+                println!(
+                    "The wallet doesn't contain the destination address \"{}\"",
+                    destination);
+                return;
+            } else if source_keys.len() > 1 || destination_keys.len() > 1 {
+                println!(
+                    "The wallet contains multiple addresses that match \"{}\":",
+                    source);
+                let _: Vec<()> = source_keys.iter().map(|wkey| {
+                    println!("{}", wallet::pretty_format(*wkey))}).collect();
+                return;
+            }
+
+            let source_sk =
+                slice_to_sk(source_keys[0].get_secret_key()).unwrap();
+            let source_pk =
+                slice_to_pk(source_keys[0].get_public_key()).unwrap();
+            let destination_pk =
+                slice_to_pk(destination_keys[0].get_public_key()).unwrap();
+            tx_builder
+                .add_transfer(&source_sk, &source_pk, &destination_pk,
+                              amount, op_number)
+                .set_bounty(&source_sk, &source_pk, 1);
         }
-        let secret_key = source_key[0].get_secret_key();
-        let transaction = tx::TransactionBuilder::new()
-            .add_transfer(&tx::slice_to_sk(secret_key).unwrap(),
-                          &tx::slice_to_pk(&source[]).unwrap(),
-                          &tx::slice_to_pk(&destination[]).unwrap(),
-                          amount, op_number)
-            .set_bounty(&tx::slice_to_sk(secret_key).unwrap(),
-                        &tx::slice_to_pk(&source[]).unwrap(), 1)
-            .build().unwrap();
-
+        let transaction = tx_builder.build().unwrap();
+        println!("{}", protobuf::text_format::print_to_string(&transaction));
         let mut client = rpc::Client::new("tcp://127.0.0.1:13337").ok().unwrap();
         let mut request = simples_pb::PublishTransactionRequest::new();
         request.set_transaction(transaction);
@@ -252,11 +222,8 @@ fn main() {
         println!("Response status: {:?}", response);
     }
     if matches.opt_present("d") {
-        // let staking_thread = Thread::scoped(move || {
-        //     do_staking(tx_receiver);
-        // });
-        let rpc_thread = Thread::scoped(move || {
-            let service = service::SimplesService::new("balance.rdb").unwrap();
+        Thread::scoped(move || {
+            let service = service::SimplesService::new("balance.rdb", "block.rdb").unwrap();
             let mut app =
                 rpc::Application::new(&rpc_endpoint[], service).unwrap();
             app.run().map_err(|err| {
