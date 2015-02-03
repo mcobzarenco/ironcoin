@@ -38,12 +38,6 @@ pub fn slice_to_signature(bytes: &[u8]) -> Option<Signature> {
     Some(Signature(sign))
 }
 
-fn hash_message<M: Message>(obj: &M) -> Vec<u8> {
-    let bytes = &obj.write_to_bytes().unwrap()[];
-    let sha512::Digest(commit_hash) = sha512::hash(&bytes[]);
-    vec::as_vec(&commit_hash[]).clone()
-}
-
 pub trait Transaction {
     fn check_signatures(&self) -> Result<(), &'static str>;
 }
