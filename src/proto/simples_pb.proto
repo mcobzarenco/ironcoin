@@ -16,9 +16,10 @@ message Block {
     optional bytes staker_pk = 1;
     optional bytes previous_block = 2;
     optional int64 timestamp = 3;
-    optional bytes target_hash = 4;
+    optional uint32 height = 4;
+    optional bytes target_hash = 5;
 
-    repeated Transaction transactions = 5;
+    repeated Transaction transactions = 6;
 }
 
 message Commitment {
