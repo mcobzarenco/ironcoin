@@ -10,7 +10,7 @@ use simples_pb;
 use store::KeyValueStore;
 use tx::Transaction;
 
-#[derive(Default, Clone, Eq, PartialEq, Show, RustcEncodable, RustcDecodable)]
+#[derive(Default, Clone, Eq, PartialEq, Debug, RustcEncodable, RustcDecodable)]
 struct Balance {
     address: Vec<u8>,
     tokens: u64,
@@ -97,8 +97,13 @@ impl<'a, Store: 'a + BalanceStoreTrait> TransactionCache<'a, Store> {
         let mut dest_balance =
                 self.get_balance(transfer.get_destination_pk()).unwrap();
         if src_balance.tokens >= transfer.get_tokens() {
+            println!("source: {}",
+                     transfer.get_source_pk().to_base64(base64::STANDARD));
+            println!("destination: {}",
+                     transfer.get_destination_pk().to_base64(base64::STANDARD));
             if transfer.get_op_index() == src_balance.op_index {
-                println!("{}: {} -> {}", src_balance.op_index,
+                println!("num: {} / tokens: {} / balance: {} -> {}\n",
+                         src_balance.op_index, transfer.get_tokens(),
                          src_balance.tokens,
                          src_balance.tokens - transfer.get_tokens());
 

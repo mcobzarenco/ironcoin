@@ -1,6 +1,9 @@
-#![feature(slicing_syntax)]
-#![allow(unstable)]
-extern crate getopts;
+#![feature(collections)]
+#![feature(core)]
+#![feature(io)]
+#![feature(os)]
+#![feature(std_misc)]
+extern crate getopts2;
 extern crate sodiumoxide;
 extern crate "rustc-serialize" as rustc_serialize;
 extern crate time;
@@ -23,12 +26,10 @@ use std::error::{Error};
 use std::old_io::timer::sleep;
 use std::os;
 use std::str::FromStr;
-use std::sync::mpsc::{Sender, Receiver};
 use std::thread::Thread;
 use std::time::duration::Duration;
-use std::vec;
 
-use getopts::{optopt, optflag, optflagopt, getopts, optmulti, OptGroup, usage};
+use getopts2::Options;
 use rustc_serialize::base64::{self, ToBase64};
 use sodiumoxide::crypto::sign::ed25519;
 
@@ -92,9 +93,9 @@ fn send_test_transactions() {
     }
 }
 
-fn print_usage(program: &str, opts: &[OptGroup]) {
+fn print_usage(program: &str, opts: Options) {
     let brief = format!("Usage: {} [options]", program);
-    print!("{}", usage(brief.as_slice(), opts));
+    print!("{}", opts.usage(brief.as_slice()));
 }
 
 const DEFAULT_ENDPOINT:&'static str = "tcp://127.0.0.1:13337";
@@ -105,18 +106,17 @@ fn main() {
     let daemon_description = format!(
         "Daemonize, run simples in the background. Pass endpoint where
         to bind (default={})", DEFAULT_ENDPOINT);
-    let opts = &[
-        optflag("h", "help", "Show this help menu."),
-        optflagopt("d", "", &daemon_description[], "ENDPOINT"),
-        optflag("", "test", "Send random transactions."),
-        optopt("f", "", "Load wallet file.", "FILE"),
-        optmulti("t", "", "Specify a transfer.", "SRC:DEST:AMOUNT:OP_NUM"),
-        optopt("", "new", "Create and add a new address to the wallet.",
-               "[NAME[:DESC]]"),
-        optflagopt("", "ls", "List all addresses contained by the wallet.",
-               "[PATTERN]"),
-    ];
-    let matches = match getopts(args.tail(), opts) {
+    let mut opts = Options::new();
+    opts.optflag("h", "help", "Show this help menu.");
+    opts.optflagopt("d", "", &daemon_description[], "ENDPOINT");
+    opts.optflag("", "test", "Send random transactions.");
+    opts.optopt("f", "", "Load wallet file.", "FILE");
+    opts.optmulti("t", "", "Specify a transfer.", "SRC:DEST:AMOUNT:OP_NUM");
+    opts.optopt("", "new", "Create and add a new address to the wallet.",
+                "[NAME[:DESC]]");
+    opts.optflagopt("", "ls", "List all addresses contained by the wallet.",
+                    "[PATTERN]");
+    let matches = match opts.parse(args.tail()) {
         Ok(m) => { m }
         Err(f) => {
             println!("{}", f);
