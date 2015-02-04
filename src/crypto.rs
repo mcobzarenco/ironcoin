@@ -92,8 +92,7 @@ impl fmt::Debug for HashDigest {
     }
 }
 
-pub fn sign_slice(
-    secret_key: &SecretKey, message: &[u8]) -> Signature {
+pub fn sign(secret_key: &SecretKey, message: &[u8]) -> Signature {
     sign_detached(message, secret_key)
 }
 
@@ -112,7 +111,7 @@ pub fn sign_message<M: MessageStatic>(
     secret_key: &SecretKey, message: &M) -> Signature
 {
     let msg_bytes = &message.write_to_bytes().unwrap()[];
-    sign_slice(secret_key, msg_bytes)
+    sign(secret_key, msg_bytes)
 }
 
 pub fn verify_signed_message<M: MessageStatic>(

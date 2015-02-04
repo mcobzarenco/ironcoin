@@ -3,7 +3,7 @@ use std::vec;
 
 use protobuf::Message;
 
-use crypto::{PublicKey, SecretKey, sign_slice, slice_to_signature, slice_to_pk,
+use crypto::{PublicKey, SecretKey, sign, slice_to_signature, slice_to_pk,
              verify_signature};
 use simples_pb;
 
@@ -78,7 +78,7 @@ impl TransactionBuilder {
         for (transfer, secret_key) in self.commit.get_transfers().iter()
             .zip(self.transfer_secret_keys.iter())
         {
-            let signature = sign_slice(secret_key, commit_bytes);
+            let signature = sign(secret_key, commit_bytes);
             let pk_bytes = vec::as_vec(transfer.get_source_pk()).clone();
             let pk = slice_to_pk(&pk_bytes[]).unwrap();
             match verify_signature(&pk, commit_bytes, &signature) {
