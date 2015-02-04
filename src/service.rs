@@ -1,12 +1,16 @@
 use std::sync::mpsc::{channel, Sender, Receiver};
 
-use balance::{BalanceStore};
-use error::{SimplesResult};
+use protobuf::{self, Message};
+
+use balance::BalanceStore;
+use crypto;
+use error::SimplesResult;
 use simples_pb::{self, PublishTransactionRequest, PublishTransactionResponse,
-                 PublishTransactionResponse_Status};
+                 PublishTransactionResponse_Status, HashedBlock};
 use staking::{ThreadedStaker};
-use store;
+use store::{ProtoStore, RocksStore};
 use tx::Transaction;
+use block;
 
 pub trait Service {
     fn pub_transaction(&mut self, request: PublishTransactionRequest) ->
@@ -14,15 +18,14 @@ pub trait Service {
 }
 
 pub struct SimplesService {
-    balance_store: BalanceStore<store::RocksStore>,
-    // staker: ThreadedStaker,
-    tx_sender: Sender<simples_pb::Transaction>
+    balance_store: BalanceStore<RocksStore>,
+    block_store: ProtoStore<RocksStore>,
+    staker: ThreadedStaker
 }
 
 impl Service for SimplesService {
-    fn pub_transaction(
-        &mut self, request: PublishTransactionRequest) ->
-        SimplesResult<PublishTransactionResponse>
+    fn pub_transaction(&mut self, request: PublishTransactionRequest)
+                       -> SimplesResult<PublishTransactionResponse>
     {
         let mut response = PublishTransactionResponse::new();
         if !request.has_transaction() {
@@ -30,11 +33,10 @@ impl Service for SimplesService {
             response.set_status(PublishTransactionResponse_Status::INVALID_REQUEST);
             return Ok(response);
         }
-        println!("{:?}", request.has_transaction());
         let transaction = request.get_transaction();
+        // println!("{}", protobuf::text_format::print_to_string(&transaction));
         let checked = transaction.check_signatures();
         if checked.is_err() {
-            println!("{:?}", checked);
             response.set_status(PublishTransactionResponse_Status::INVALID_REQUEST);
             return Ok(response);
         }
@@ -56,15 +58,17 @@ impl Service for SimplesService {
 }
 
 impl SimplesService {
-    pub fn new(balance_db: &str) -> SimplesResult<SimplesService> {
-        let rocks_store = try!(store::RocksStore::new(balance_db));
-        let balance_store = BalanceStore::new(rocks_store);
-        let (tx_sender, tx_receiver) = channel();
+    pub fn new(balance_db: &str, block_db: &str)
+               -> SimplesResult<SimplesService>
+    {
+        let balance_store = BalanceStore::new(try!(RocksStore::new(balance_db)));
+        let block_store = ProtoStore::new(try!(RocksStore::new(block_db)));
+        let staker = try!(ThreadedStaker::new(crypto::hash(b"a"), 100));
 
         Ok(SimplesService {
             balance_store: balance_store,
-            // staker: staker,
-            tx_sender: tx_sender
+            block_store: block_store,
+            staker: staker
         })
     }
 }
