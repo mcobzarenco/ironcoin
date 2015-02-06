@@ -1,25 +1,28 @@
 [package]
 name = "simples"
-version = "0.0.1"
+version = "0.0.2"
 authors = ["Marius Cobzarenco <marius@reinfer.io>"]
 
-# [dependencies.getopts]
-# git = "https://github.com/rust-lang/getopts.git"
+[dependencies.getopts2]
+git = "https://github.com/mcobzarenco/getopts.git"
 
-[dependencies.time]
-git = "https://github.com/rust-lang/time.git"
-
-[dependencies.sodiumoxide]
-git = "https://github.com/dnaq/sodiumoxide.git"
-
-[dependencies.rustc-serialize]
-git = "https://github.com/rust-lang/rustc-serialize.git"
-
-[dependencies.rocksdb]
-git = "https://github.com/spacejam/rust-rocksdb.git"
+[dependencies.nanomsg]
+git = "https://github.com/blabaere/nanomsg.rs.git"
 
 [dependencies.protobuf]
 git = "https://github.com/stepancheg/rust-protobuf.git"
 
-[dependencies.nanomsg]
-git = "https://github.com/blabaere/nanomsg.rs.git"
+[dependencies.rocksdb]
+git = "https://github.com/spacejam/rust-rocksdb.git"
+
+[dependencies.rustc-serialize]
+git = "https://github.com/rust-lang/rustc-serialize.git"
+
+[dependencies.uuid]
+git = "https://github.com/rust-lang/uuid.git"
+
+[dependencies.sodiumoxide]
+git = "https://github.com/dnaq/sodiumoxide.git"
+
+[dependencies.time]
+git = "https://github.com/rust-lang/time.git"

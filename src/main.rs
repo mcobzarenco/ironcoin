@@ -4,11 +4,12 @@
 #![feature(os)]
 #![feature(std_misc)]
 extern crate getopts2;
-extern crate sodiumoxide;
-extern crate "rustc-serialize" as rustc_serialize;
-extern crate time;
 extern crate nanomsg;
 extern crate protobuf;
+extern crate sodiumoxide;
+extern crate time;
+extern crate uuid;
+extern crate "rustc-serialize" as rustc_serialize;
 
 mod balance;
 mod block;
@@ -31,9 +32,8 @@ use std::time::duration::Duration;
 
 use getopts2::Options;
 use rustc_serialize::base64::{self, ToBase64};
-use sodiumoxide::crypto::sign::ed25519;
 
-use crypto::{slice_to_pk, slice_to_sk};
+use crypto::{gen_keypair, PublicKey, slice_to_pk, slice_to_sk};
 use service::Service;
 use wallet::WalletExt;
 
@@ -42,8 +42,8 @@ fn send_test_transactions() {
     let mut count = 1u32;
     let sleep_duration = Duration::milliseconds(100);
 
-    let (pk1, sk1) = ed25519::gen_keypair();
-    let (pk2, sk2) = ed25519::gen_keypair();
+    let (pk1, sk1) = gen_keypair();
+    let (pk2, sk2) = gen_keypair();
     loop {
         let mut tx_builder = tx::TransactionBuilder::new();
         tx_builder
@@ -215,7 +215,7 @@ fn main() {
         }
         let transaction = tx_builder.build().unwrap();
         println!("{}", protobuf::text_format::print_to_string(&transaction));
-        let mut client = rpc::Client::new("tcp://127.0.0.1:13337").ok().unwrap();
+        let mut client = rpc::Client::new("tcp://127.0.0.1:13337").unwrap();
         let mut request = simples_pb::PublishTransactionRequest::new();
         request.set_transaction(transaction);
         let response = client.pub_transaction(request).ok().unwrap();
@@ -223,7 +223,8 @@ fn main() {
     }
     if matches.opt_present("d") {
         Thread::scoped(move || {
-            let service = service::SimplesService::new("balance.rdb", "block.rdb").unwrap();
+            let service = service::SimplesService::new(
+                "balance.rdb", "block.rdb").unwrap();
             let mut app =
                 rpc::Application::new(&rpc_endpoint[], service).unwrap();
             app.run().map_err(|err| {

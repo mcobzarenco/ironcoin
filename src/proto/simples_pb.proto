@@ -14,7 +14,7 @@ message SignedBlock {
 
 message Block {
     optional bytes staker_pk = 1;
-    optional bytes previous_block = 2;
+    optional bytes previous = 2;
     optional int64 timestamp = 3;
     optional uint32 height = 4;
     optional bytes target_hash = 5;

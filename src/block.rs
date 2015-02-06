@@ -1,41 +1,24 @@
-use simples_pb::{HashedBlock, SignedBlock, Block};
-
-use protobuf::MessageStatic;
-use sodiumoxide::crypto::hash::sha512::{self, Digest, HASHBYTES};
-use sodiumoxide::crypto::sign::ed25519::{
-    self, PublicKey, SecretKey, PUBLICKEYBYTES, SECRETKEYBYTES,
-    Signature, SIGNATUREBYTES, sign_detached, verify_detached};
 use rustc_serialize::base64::{self, ToBase64};
 
-use tx::{slice_to_signature};
-
-fn hash_message<M: MessageStatic>(message: &M) -> Digest {
-    let msg_bytes = &message.write_to_bytes().unwrap()[];
-    sha512::hash(msg_bytes)
-}
-
-fn sign_message<M: MessageStatic>(
-    secret_key: &SecretKey, message: &M) -> Signature
-{
-    let msg_bytes = &message.write_to_bytes().unwrap()[];
-    sign_detached(msg_bytes, secret_key)
-}
-
-fn verify_signed_message<M: MessageStatic>(
-    public_key: &PublicKey, message: &M, signature: &Signature) -> bool
-{
-    let msg_bytes = &message.write_to_bytes().unwrap()[];
-    verify_detached(signature, msg_bytes, public_key)
-}
+use crypto::{HashDigest, SecretKey, hash_message,
+             sign_message, slice_to_signature};
+use simples_pb::{HashedBlock, SignedBlock, Block};
+use store::{ProtoStore, KeyValueStore};
+use error::{SimplesResult};
 
 pub trait HashedBlockExt {
+    fn get_block<'a>(&'a self) -> &'a Block;
     fn compute_hash(&mut self);
     fn valid_hash(&self) -> bool;
 }
 
 impl HashedBlockExt for HashedBlock {
+    fn get_block<'a>(&'a self) -> &'a Block {
+        self.get_signed_block().get_block()
+    }
+
     fn compute_hash(&mut self) {
-        let Digest(hash_bytes) = hash_message(self.get_signed_block());
+        let HashDigest(hash_bytes) = hash_message(self.get_signed_block());
         self.set_hash(hash_bytes.to_vec());
     }
 
@@ -60,6 +43,56 @@ impl SignedBlockExt for SignedBlock {
     }
 }
 
+const GENESIS_FIELD: &'static [u8] = b"genesis";
+const CHAIN_HEAD_FIELD: &'static [u8] = b"blockchain-head";
+
+fn valid_block(block: &HashedBlock) -> bool {
+    block.valid_hash() && block.get_signed_block().valid_sign()
+}
+
+pub struct BlockStore<Store: KeyValueStore> {
+    proto_store: ProtoStore<Store>
+}
+
+impl<Store: KeyValueStore> BlockStore<Store> {
+    pub fn new(kv_store: Store) -> Self {
+        BlockStore { proto_store: ProtoStore::new(kv_store) }
+    }
+
+    pub fn get_head(&self) -> SimplesResult<Option<HashedBlock>> {
+        self.proto_store.get(CHAIN_HEAD_FIELD)
+    }
+
+    pub fn set_head(&mut self, block: &HashedBlock) -> SimplesResult<()> {
+        assert!(valid_block(block));
+        Ok(try!(self.proto_store.set(CHAIN_HEAD_FIELD, block)))
+    }
+
+    pub fn get_genesis(&self) -> SimplesResult<Option<HashedBlock>> {
+        self.proto_store.get(GENESIS_FIELD)
+    }
+
+    pub fn set_genesis(&mut self, block: &HashedBlock) -> SimplesResult<()> {
+        assert!(valid_block(block));
+        Ok(try!(self.proto_store.set(GENESIS_FIELD, block)))
+    }
+
+    pub fn get_block(&self, hash: &HashDigest)
+                     -> SimplesResult<Option<HashedBlock>> {
+        let maybe_block = self.proto_store.get(&hash.0[]);
+        match maybe_block {
+            Ok(Some(ref block)) => { assert!(valid_block(block)); },
+            _ => ()
+        };
+        maybe_block
+    }
+
+    pub fn set_block(&mut self, block: &HashedBlock) -> SimplesResult<()> {
+        assert!(valid_block(block));
+        Ok(try!(self.proto_store.set(&block.get_hash()[], block)))
+    }
+}
+
 #[test]
 fn test_hashed_block_ext() {
     let mut hashed_block = HashedBlock::new();
@@ -72,5 +105,4 @@ fn test_hashed_block_ext() {
 
 #[test]
 fn test_signed_block_ext() {
-
 }
