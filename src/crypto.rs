@@ -1,5 +1,5 @@
 use std::cmp::{Ordering};
-use std::error::FromError;
+use std::error::{Error, FromError};
 use std::fmt;
 use std::hash::{self, Hash, Hasher};
 use std::slice::bytes::copy_memory;
@@ -12,6 +12,8 @@ use sodiumoxide::crypto::sign::ed25519::{self,
     PUBLICKEYBYTES, SECRETKEYBYTES, SIGNATUREBYTES,
     sign_detached, verify_detached};
 use time::now_utc;
+
+use error::{SimplesError, SimplesResult};
 
 pub use sodiumoxide::crypto::hash::sha512::HASHBYTES;
 pub use sodiumoxide::crypto::sign::ed25519::{SecretKey, Signature};
@@ -36,13 +38,15 @@ impl HashDigest {
         proof_hash
     }
 
-    pub fn from_bytes(bytes: &[u8]) -> Option<HashDigest> {
+    pub fn from_bytes(bytes: &[u8]) -> SimplesResult<HashDigest> {
         match bytes.len() != HASHBYTES {
-            true => None,
+            true => Err(SimplesError::new(&format!(
+                "Invalid length for a hash {} != {} (required).",
+                bytes.len(), HASHBYTES))),
             false => {
                 let mut digest = HashDigest([0; HASHBYTES]);
                 copy_memory(&mut digest.0[], bytes);
-                Some(digest)
+                Ok(digest)
             }
         }
     }
@@ -110,10 +114,8 @@ impl Decodable for HashDigest {
         let bytes = &try!(<Vec<u8> as Decodable>::decode(decoder))[];
         let n_bytes = bytes.len();
         match HashDigest::from_bytes(bytes) {
-            Some(digest) => Ok(digest),
-            None => Err(decoder.error(&format!(
-                "Decoding error: a digest hash has exactly {} bytes != {} found",
-                HASHBYTES, n_bytes)[]))
+            Ok(digest) => Ok(digest),
+            Err(err) => Err(decoder.error(err.description()))
         }
     }
 }
