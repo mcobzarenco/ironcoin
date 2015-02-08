@@ -23,9 +23,9 @@ struct BlockSummary {
 
 #[derive(Clone, Eq, PartialEq, Debug, RustcEncodable, RustcDecodable)]
 pub struct BlockTemplate {
-    proof_hash: HashDigest,
-    previous_block: HashDigest,
-    timestamp: i64
+    pub proof_hash: HashDigest,
+    pub previous_block: HashDigest,
+    pub timestamp: i64
 }
 
 pub struct ThreadedStaker {
@@ -161,11 +161,10 @@ impl StakingWorker {
             if self.staked_block.is_none() {
                 let maybe_staked = self.try_staking(STAKING_INTERVAL);
                 if maybe_staked.is_some() {
-                    println!("Successfully staked a new block:\n{:?}",
-                             maybe_staked.as_ref().unwrap());
                     let staked_enc = json::encode(
                         maybe_staked.as_ref().unwrap()).unwrap();
-                    self.publish_staked.write_all(staked_enc.as_bytes()).unwrap();
+                    self.publish_staked.write_all(
+                        staked_enc.as_bytes()).unwrap();
                     self.staked_block = maybe_staked;
                     println!("Sent block!");
                 }
@@ -192,8 +191,6 @@ impl StakingWorker {
                         println!("StakingWorker: Failed to read in message: '{}'.",
                                  err);
                         return Err(FromError::from_error(err));
-                    } else {
-                        println!("Timeout: {}", now_utc().to_timespec().sec);
                     }
                 }
             };
@@ -220,10 +217,7 @@ impl StakingWorker {
             let timestamp_bytes: [u8; 8] = unsafe { transmute(timestamp) };
             proof_bytes.push_all(&timestamp_bytes[]);
             let proof_hash = hash(&proof_bytes[]);
-            println!("{}, timestamp={}, transmuted={:?}",
-                     proof_hash.0[0], timestamp, timestamp_bytes);
-            if proof_hash.0[0] < 30 {
-                println!("Staked {}", &proof_hash.0[].to_base64(base64::STANDARD));
+            if proof_hash.0[0] < 10 {
                 return Some(BlockTemplate {
                     proof_hash: proof_hash,
                     previous_block: head_block.hash.clone(),
