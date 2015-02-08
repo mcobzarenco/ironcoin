@@ -12,6 +12,12 @@ pub struct SimplesError {
     description: String
 }
 
+impl SimplesError {
+    pub fn new(description: &str) -> SimplesError {
+        SimplesError { description: String::from_str(description) }
+    }
+}
+
 impl Display for SimplesError {
     fn fmt(&self, formatter: &mut Formatter) -> Result<(), fmt::Error> {
         formatter.write_str(&self.description[])
