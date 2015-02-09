@@ -1,16 +1,21 @@
+use protobuf::Message;
 use time::now_utc;
+use uuid::Uuid;
 
 use balance::BalanceStore;
 use block::{BlockStore, HashedBlockExt};
-use crypto::{HashDigest, PublicKey, SecretKey};
+use crypto::HashDigest;
 use error::SimplesResult;
+use nanomsg::{Endpoint, Protocol, Socket};
 use simples_pb::{self, PublishTransactionRequest, PublishTransactionResponse,
-                 HashedBlock};
-use staking::{BlockTemplate, HeadBlockUpdater};
+                 PublishBlockRequest, PublishBlockResponse, HashedBlock};
+use staking::BlockTemplate;
 use store::RocksStore;
 use tx::Transaction;
 
 pub trait Service {
+    fn pub_block(&mut self, request: PublishBlockRequest) ->
+        SimplesResult<PublishBlockResponse>;
     fn pub_transaction(&mut self, request: PublishTransactionRequest) ->
         SimplesResult<PublishTransactionResponse>;
 }
@@ -18,16 +23,17 @@ pub trait Service {
 pub trait HasStaker {
     fn on_successful_stake(&mut self, template: BlockTemplate)
                            -> SimplesResult<()>;
-    fn update_staker(&mut self, staker_head: HeadBlockUpdater)
-                     -> SimplesResult<()> ;
+    fn get_endpoint(&self) -> &str;
+    fn get_head_block(&self) -> &HashedBlock;
 }
 
 pub struct SimplesService {
     balance_store: BalanceStore<RocksStore>,
     block_store: BlockStore<RocksStore>,
-    staker_head: Option<HeadBlockUpdater>,
     pending_transactions: Vec<simples_pb::Transaction>,
-    staking_keys: Vec<(SecretKey, PublicKey)>
+    pub_block_socket: Socket,
+    pub_block_endpoint: Endpoint,
+    pub_block_endpoint_str: String
 }
 
 impl HasStaker for SimplesService {
@@ -47,37 +53,69 @@ impl HasStaker for SimplesService {
             block.set_previous(prev_head_hash.0.to_vec());
         }
         let head_hash = hashed_block.compute_hash();
-        try!(self.block_store.set_head(hashed_block));
+        try!(self.block_store.set_head(hashed_block.clone()));
 
-        let mut cache = self.balance_store.mutate();
-        for tx in self.pending_transactions.iter() {
-            let apply_result = cache.apply_transaction(tx);
-            assert!(apply_result.is_ok());
+        {
+            let mut cache = self.balance_store.mutate();
+            for tx in self.pending_transactions.iter() {
+                let apply_result = cache.apply_transaction(tx);
+                assert!(apply_result.is_ok());
+            }
+            try!(cache.flush());
         }
-        try!(cache.flush());
-        try!(self.staker_head.as_mut().unwrap().set_head_block(
-            head_hash.clone(), prev_head_hash.clone(), now_utc().to_timespec().sec));
+        // try!(self.staker_head.as_mut().unwrap().set_head_block(
+        //     head_hash.clone(), prev_head_hash.clone(), now_utc().to_timespec().sec));
+        try!(self.publish_block(hashed_block.clone()));
         println!("\n============");
         println!("Sucessful stake ({} tx) now={} head_time={}:\nnew head: {}\nprev_head: {}",
                  self.pending_transactions.len(), now_utc().to_timespec().sec,
                  template.timestamp, head_hash, prev_head_hash);
         println!("============\n");
         self.pending_transactions.clear();
+
+        // for peer in range(0, self.peers.len()) {
+        //     let mut request = PublishBlockRequest::new();
+        //     request.set_block(hashed_block.clone());
+        //     let response = self.peers[peer].pub_block(request);
+        //     if response.is_err() {
+        //         println!("Could not pub_block to peer \"{}\":P{}",
+        //                  self.peer_endpoints[peer], response.as_ref().err().unwrap());
+        //     }
+        //     println!("pub_block: got status {:?}", response.unwrap().get_status());
+        // }
         Ok(())
     }
 
-    fn update_staker(&mut self, mut staker_head: HeadBlockUpdater)
-                     -> SimplesResult<()> {
-        let head_hash = self.block_store.get_head_hash();
-        try!(staker_head.set_head_block(
-            head_hash.clone(), head_hash, now_utc().to_timespec().sec));
-        self.staker_head = Some(staker_head);
-        Ok(())
-    }
+    fn get_endpoint(&self) -> &str { &self.pub_block_endpoint_str[] }
+
+    fn get_head_block(&self) -> &HashedBlock { self.block_store.get_head() }
 }
 
-
 impl Service for SimplesService {
+    fn pub_block(&mut self, request: PublishBlockRequest) ->
+        SimplesResult<PublishBlockResponse>
+    {
+        use simples_pb::PublishBlockResponse_Status as ResponseStatus;
+
+        println!("Got a block: {:?}", request);
+
+        let mut response = PublishBlockResponse::new();
+        if !request.has_block() {
+            println!("Missing block {:?}", request.has_block());
+            response.set_status(ResponseStatus::INVALID_REQUEST);
+            return Ok(response);
+        }
+        let hashed_block = request.get_block();
+        if hashed_block.verify_hash().is_err() {
+            println!("Received a block with invalid hash from peer");
+            response.set_status(ResponseStatus::INVALID_BLOCK);
+            return Ok(response);
+        }
+        println!("Block is valid;");
+        response.set_status(ResponseStatus::OK);
+        Ok(response)
+    }
+
     fn pub_transaction(&mut self, mut request: PublishTransactionRequest)
                        -> SimplesResult<PublishTransactionResponse> {
         use simples_pb::PublishTransactionResponse_Status as ResponseStatus;
@@ -138,12 +176,23 @@ impl SimplesService {
             };
         println!("Head block: {:?}", block_store.get_head_hash());
 
+        let pub_endpoint_str = format!("inproc://{}", Uuid::new_v4().to_string());
+        let mut pub_socket = try!(Socket::new(Protocol::Pub));
+        let pub_endpoint = try!(pub_socket.bind(&pub_endpoint_str[]));
+
         Ok(SimplesService {
             balance_store: balance_store,
             block_store: block_store,
-            staker_head: None,
             pending_transactions: vec![],
-            staking_keys: vec![]
+            pub_block_socket: pub_socket,
+            pub_block_endpoint: pub_endpoint,
+            pub_block_endpoint_str: pub_endpoint_str
         })
+    }
+
+    fn publish_block(&mut self, block: HashedBlock) -> SimplesResult<()> {
+        let block_bytes = &try!(block.write_to_bytes())[];
+        try!(self.pub_block_socket.write_all(block_bytes));
+        Ok(())
     }
 }

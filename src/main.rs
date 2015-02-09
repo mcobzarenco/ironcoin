@@ -3,6 +3,7 @@
 #![feature(io)]
 #![feature(os)]
 #![feature(std_misc)]
+#![feature(unsafe_destructor)]
 extern crate getopts2;
 extern crate nanomsg;
 extern crate protobuf;
@@ -34,7 +35,7 @@ use getopts2::Options;
 use rustc_serialize::base64::{self, ToBase64};
 
 use crypto::{gen_keypair, PublicKey, slice_to_pk, slice_to_sk};
-use service::Service;
+use service::{Service, SimplesService};
 use wallet::WalletExt;
 
 fn send_test_transactions() {
@@ -112,10 +113,13 @@ fn main() {
     opts.optflag("", "test", "Send random transactions.");
     opts.optopt("f", "", "Load wallet file.", "FILE");
     opts.optmulti("t", "", "Specify a transfer.", "SRC:DEST:AMOUNT:OP_NUM");
+    opts.optmulti("p", "", "Specify a peer.", "ENDPOINT");
     opts.optopt("", "new", "Create and add a new address to the wallet.",
                 "[NAME[:DESC]]");
     opts.optflagopt("", "ls", "List all addresses contained by the wallet.",
                     "[PATTERN]");
+    opts.optopt("", "block-db", "Specify block database.", "PATH");
+    opts.optopt("", "balance-db", "Specify balance database.", "PATH");
     let matches = match opts.parse(args.tail()) {
         Ok(m) => { m }
         Err(f) => {
@@ -222,11 +226,20 @@ fn main() {
         println!("Response status: {:?}", response);
     }
     if matches.opt_present("d") {
+        let block_db = matches.opt_str("block-db")
+            .unwrap_or(String::from_str("block.rdb"));
+        let balance_db = matches.opt_str("balance-db")
+            .unwrap_or(String::from_str("balance.rdb"));
+
+        let mut peers = vec![];
+        if matches.opt_present("p") {
+            peers.push_all(&matches.opt_strs("p"));
+        }
         Thread::scoped(move || {
-            let service = service::SimplesService::new(
-                "balance.rdb", "block.rdb").unwrap();
+            let service =
+                SimplesService::new(&balance_db[], &block_db[]).unwrap();
             let mut app =
-                rpc::Application::new(&rpc_endpoint[], service).unwrap();
+                rpc::Application::new(&rpc_endpoint[], peers, service).unwrap();
             app.run().map_err(|err| {
                 println!("App existed with error '{}'", err.description());
             }).unwrap();

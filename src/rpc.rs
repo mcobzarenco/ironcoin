@@ -1,16 +1,19 @@
 use std::error::FromError;
 use std::time::Duration;
 
-use nanomsg::{Endpoint, PollFd, PollRequest, Protocol, Socket, NanoErrorKind};
+use nanomsg::{Endpoint, PollRequest, Protocol, Socket, NanoErrorKind};
 use protobuf::{self, Message};
 use rustc_serialize::json;
 
+use block::HashedBlockExt;
+use crypto::HashDigest;
 use error::{SimplesResult};
-use service::{self, HasStaker};
+use service::{self, HasStaker, Service};
 use simples_pb::{
     self, RpcRequest, RpcRequest_Method, RpcResponse, RpcResponse_Status,
-    PublishTransactionRequest, PublishTransactionResponse};
-use staking::{BlockTemplate, ThreadedStaker};
+    PublishTransactionRequest, PublishTransactionResponse,
+    PublishBlockRequest, PublishBlockResponse, HashedBlock};
+use staking::{BlockTemplate, Staker, STAKING_INTERVAL};
 
 pub struct Client {
     pub endpoint_str: String,
@@ -41,7 +44,17 @@ impl Drop for Client {
     fn drop(&mut self) { self.endpoint.shutdown().unwrap(); }
 }
 
-impl service::Service for Client {
+impl Service for Client {
+    fn pub_block(&mut self, request: PublishBlockRequest) ->
+        SimplesResult<PublishBlockResponse>
+    {
+        let mut wrapped_request = RpcRequest::new();
+        wrapped_request.set_method(RpcRequest_Method::PUBLISH_BLOCK);
+        wrapped_request.set_pub_block(request);
+        self.dispatch(wrapped_request)
+            .map(|mut response| response.take_pub_block())
+    }
+
     fn pub_transaction(&mut self, request: PublishTransactionRequest) ->
         SimplesResult<PublishTransactionResponse>
     {
@@ -55,19 +68,37 @@ impl service::Service for Client {
 
 pub struct Application<Service: service::Service + HasStaker> {
     pub endpoint: String,
+    peers: Vec<Client>,
     service: Service,
-    staker: ThreadedStaker
+    staker: Staker,
+    sub_head_socket: Socket,
+    sub_head_endpoint: Endpoint
 }
 
 impl<Service: service::Service + HasStaker> Application<Service> {
-    pub fn new(endpoint: &str, mut service: Service) ->
-        SimplesResult<Application<Service>> {
-        let staker = try!(ThreadedStaker::new());
-        service.update_staker(try!(staker.new_head_block_updater()));
+    pub fn new(endpoint: &str, peers: Vec<String>, service: Service)
+               -> SimplesResult<Application<Service>>
+    {
+        let mut sub_head_socket = try!(Socket::new(Protocol::Sub));
+        try!(sub_head_socket.subscribe(""));
+        let sub_head_endpoint = try!(
+            sub_head_socket.connect(service.get_endpoint()));
+        let staker = Staker::new(
+            try!(HashDigest::from_bytes(service.get_head_block().get_hash())),
+            service.get_head_block().get_block().get_timestamp());
+
+        let mut peer_clients = Vec::<Client>::new();
+        for endpoint in peers.iter() {
+            peer_clients.push(try!(Client::new(endpoint)));
+        }
+
         Ok(Application {
             endpoint: String::from_str(endpoint),
+            peers: peer_clients,
             service: service,
-            staker: staker
+            staker: staker,
+            sub_head_socket: sub_head_socket,
+            sub_head_endpoint: sub_head_endpoint
         })
     }
 
@@ -83,7 +114,13 @@ impl<Service: service::Service + HasStaker> Application<Service> {
                 response.set_status(RpcResponse_Status::OK);
                 response.set_pub_transaction(
                     self.service.pub_transaction(
-                        request.take_pub_transaction()).ok().unwrap());
+                        request.take_pub_transaction()).unwrap());
+                response
+            },
+            RpcRequest_Method::PUBLISH_BLOCK => {
+                response.set_status(RpcResponse_Status::OK);
+                response.set_pub_block(
+                    self.service.pub_block(request.take_pub_block()).unwrap());
                 response
             }
         }
@@ -105,37 +142,26 @@ impl<Service: service::Service + HasStaker> Application<Service> {
     pub fn run(&mut self) -> SimplesResult<()> {
         let mut rpc_socket = try!(Socket::new(Protocol::Rep));
         let mut rpc_endpoint = try!(rpc_socket.bind(&self.endpoint[]));
-        let mut poll_fds = [self.staker.get_staked_block.new_pollfd(true, false),
-                            rpc_socket.new_pollfd(true, false)];
+        let mut poll_fds = [rpc_socket.new_pollfd(true, false),
+                            self.sub_head_socket.new_pollfd(true, false)];
         let mut poll_request = PollRequest::new(&mut poll_fds[]);
 
         println!("[app loop] RPC service is running at {}", self.endpoint);
         loop {
             let poll_result = Socket::poll(
-                &mut poll_request, &Duration::seconds(-1));
+                &mut poll_request, &Duration::seconds(STAKING_INTERVAL));
             if poll_result.is_err() {
                 let err = poll_result.err().unwrap();
-                println!("[app loop] Failed to read in request '{}'. Exiting.",
-                         err);
-                return Err(FromError::from_error(err));
+                if err.kind == NanoErrorKind::Timeout {
+                    println!("Rpc timeout.");
+                    self.handle_timeout();
+                } else {
+                    println!("[app loop] Failed to read in request '{}'. Exiting.",
+                             err);
+                    return Err(FromError::from_error(err));
+                }
             }
-            if poll_request.get_fds()[0].can_read() {
-                match self.staker.get_staked_block.read_to_end() {
-                    Ok(msg) => {
-                        let msg_as_utf8 = ::std::str::from_utf8(&msg[]).unwrap();
-                        let template: BlockTemplate =
-                            json::decode(msg_as_utf8).unwrap();
-                        self.service.on_successful_stake(template);
-                    },
-                    Err(err) => {
-                        println!(
-                            "[app loop] Failed to read in staked block '{}'. Exiting.",
-                            err);
-                        return Err(FromError::from_error(err));
-                    }
-                };
-            }
-            if poll_request.get_fds()[1].can_read() {
+            if poll_request.get_fds()[0].can_read() { // Rpc Request
                 match rpc_socket.read_to_end() {
                     Ok(request) => {
                         let response = self.handle_raw_request(&request[]);
@@ -148,8 +174,23 @@ impl<Service: service::Service + HasStaker> Application<Service> {
                         }
                     },
                     Err(err) => {
-                        println!("[app loop] Failed to read in request '{}'. Exiting.",
-                                 err);
+                        println!(
+                            "[app loop] Failed to read in request '{}'. Exiting.",
+                            err);
+                        return Err(FromError::from_error(err));
+                    }
+                }
+            }
+            if poll_request.get_fds()[1].can_read() { // New head block
+                match self.sub_head_socket.read_to_end() {
+                    Ok(msg) => {
+                        self.handle_new_head_block(
+                            try!(protobuf::parse_from_bytes(&msg[])));
+                    },
+                    Err(err) => {
+                        println!(
+                            "[app loop] Failed to read in published new block '{}'.",
+                            err);
                         return Err(FromError::from_error(err));
                     }
                 };
@@ -157,6 +198,40 @@ impl<Service: service::Service + HasStaker> Application<Service> {
         } // loop
         try!(rpc_endpoint.shutdown());
     }
+
+    fn handle_timeout(&mut self) -> SimplesResult<()> {
+        match self.staker.stake_interval(STAKING_INTERVAL) {
+            Some(template) => self.service.on_successful_stake(template),
+            None => Ok(())
+        }
+    }
+
+    fn handle_new_head_block(&mut self, new_head: HashedBlock)
+                             -> SimplesResult<()>
+    {
+        println!("Sub-ed new block!");
+        self.staker.set_head_block(
+            try!(HashDigest::from_bytes(new_head.get_hash())),
+            new_head.get_block().get_timestamp());
+
+        for peer_index in range(0, self.peers.len()) {
+            let mut request = PublishBlockRequest::new();
+            request.set_block(new_head.clone());
+            let response = self.peers[peer_index].pub_block(request);
+            if response.is_err() {
+                println!("Could not pub_block to peer \"{}\":P{}",
+                         self.peers[peer_index].endpoint_str,
+                         response.as_ref().err().unwrap());
+            }
+            println!("pub_block: got status {:?}", response.unwrap().get_status());
+        }
+        Ok(())
+    }
+}
+
+#[unsafe_destructor]
+impl<Service: service::Service + HasStaker> Drop for Application<Service> {
+    fn drop(&mut self) { self.sub_head_endpoint.shutdown().unwrap(); }
 }
 
 

@@ -67,10 +67,12 @@ message RpcRequest {
     enum Method {
         INVALID = 0;
         PUBLISH_TRANSACTION = 1;
+        PUBLISH_BLOCK = 2;
     }
     optional Method method = 1;
 
     optional PublishTransactionRequest pub_transaction = 2;
+    optional PublishBlockRequest pub_block = 3;
 }
 
 message RpcResponse {
@@ -79,11 +81,13 @@ message RpcResponse {
         OK = 1;
         INVALID_MESSAGE = 2;
         INVALID_METHOD = 3;
+        INTERNAL_ERROR = 4;
     }
     optional Status status = 1;
     optional string description = 2;
 
     optional PublishTransactionResponse pub_transaction = 3;
+    optional PublishBlockResponse pub_block = 4;
 }
 
 message PublishTransactionRequest {
@@ -95,6 +99,21 @@ message PublishTransactionResponse {
         INVALID = 0;
         OK = 1;
         INVALID_REQUEST = 2;
+    }
+    optional Status status = 1;
+    optional string description = 2;
+}
+
+message PublishBlockRequest {
+    optional HashedBlock block = 1;
+}
+
+message PublishBlockResponse {
+    enum Status {
+        INVALID = 0;
+        OK = 1;
+        INVALID_REQUEST = 2;
+        INVALID_BLOCK = 3;
     }
     optional Status status = 1;
     optional string description = 2;

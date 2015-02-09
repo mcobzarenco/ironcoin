@@ -54,8 +54,7 @@ impl<Store: KeyValueStore> ProtoStore<Store> {
     pub fn new(kv_store: Store) -> Self { ProtoStore { kv_store: kv_store } }
 
     pub fn get<Message: MessageStatic>
-        (&self, key: &[u8]) -> SimplesResult<Option<Message>>
-    {
+        (&self, key: &[u8]) -> SimplesResult<Option<Message>> {
         Ok(match try!(self.kv_store.get_bytes(key)) {
             Some(bytes) => Some(try!(protobuf::parse_from_bytes(&bytes[]))),
             None => None
