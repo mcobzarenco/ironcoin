@@ -13,18 +13,21 @@ use staking::BlockTemplate;
 use store::RocksStore;
 use tx::Transaction;
 
-pub trait Service {
+pub trait RpcService {
     fn pub_block(&mut self, request: PublishBlockRequest) ->
         SimplesResult<PublishBlockResponse>;
     fn pub_transaction(&mut self, request: PublishTransactionRequest) ->
         SimplesResult<PublishTransactionResponse>;
 }
 
-pub trait HasStaker {
+pub trait StakerService {
     fn on_successful_stake(&mut self, template: BlockTemplate)
                            -> SimplesResult<()>;
-    fn get_endpoint(&self) -> &str;
-    fn get_head_block(&self) -> &HashedBlock;
+}
+
+pub trait HeadBlockPubService {
+    fn get_pub_endpoint(&self) -> &str;
+    fn current_head_block(&self) -> &HashedBlock;
 }
 
 pub struct SimplesService {
@@ -36,7 +39,7 @@ pub struct SimplesService {
     pub_block_endpoint_str: String
 }
 
-impl HasStaker for SimplesService {
+impl StakerService for SimplesService {
     fn on_successful_stake(&mut self, template: BlockTemplate)
                            -> SimplesResult<()>
     {
@@ -86,12 +89,15 @@ impl HasStaker for SimplesService {
         Ok(())
     }
 
-    fn get_endpoint(&self) -> &str { &self.pub_block_endpoint_str[] }
-
-    fn get_head_block(&self) -> &HashedBlock { self.block_store.get_head() }
 }
 
-impl Service for SimplesService {
+impl HeadBlockPubService for SimplesService {
+    fn get_pub_endpoint(&self) -> &str { &self.pub_block_endpoint_str[] }
+
+    fn current_head_block(&self) -> &HashedBlock { self.block_store.get_head() }
+}
+
+impl RpcService for SimplesService {
     fn pub_block(&mut self, request: PublishBlockRequest) ->
         SimplesResult<PublishBlockResponse>
     {

@@ -8,12 +8,14 @@ use rustc_serialize::json;
 use block::HashedBlockExt;
 use crypto::HashDigest;
 use error::{SimplesResult};
-use service::{self, HasStaker, Service};
+use service::{HeadBlockPubService, RpcService, StakerService};
 use simples_pb::{
     self, RpcRequest, RpcRequest_Method, RpcResponse, RpcResponse_Status,
     PublishTransactionRequest, PublishTransactionResponse,
-    PublishBlockRequest, PublishBlockResponse, HashedBlock};
+    PublishBlockRequest, PublishBlockResponse, HashedBlock,
+    Wallet};
 use staking::{BlockTemplate, Staker, STAKING_INTERVAL};
+use wallet::WalletExt;
 
 pub struct Client {
     pub endpoint_str: String,
@@ -44,7 +46,7 @@ impl Drop for Client {
     fn drop(&mut self) { self.endpoint.shutdown().unwrap(); }
 }
 
-impl Service for Client {
+impl RpcService for Client {
     fn pub_block(&mut self, request: PublishBlockRequest) ->
         SimplesResult<PublishBlockResponse>
     {
@@ -66,7 +68,7 @@ impl Service for Client {
     }
 }
 
-pub struct Application<Service: service::Service + HasStaker> {
+pub struct Application<Service: RpcService + StakerService + HeadBlockPubService> {
     pub endpoint: String,
     peers: Vec<Client>,
     service: Service,
@@ -75,17 +77,19 @@ pub struct Application<Service: service::Service + HasStaker> {
     sub_head_endpoint: Endpoint
 }
 
-impl<Service: service::Service + HasStaker> Application<Service> {
-    pub fn new(endpoint: &str, peers: Vec<String>, service: Service)
+impl<Service: RpcService + StakerService + HeadBlockPubService>
+    Application<Service> {
+    pub fn new(endpoint: &str, service: Service, peers: Vec<String>,
+               staking_keys: Wallet)
                -> SimplesResult<Application<Service>>
     {
         let mut sub_head_socket = try!(Socket::new(Protocol::Sub));
         try!(sub_head_socket.subscribe(""));
         let sub_head_endpoint = try!(
-            sub_head_socket.connect(service.get_endpoint()));
+            sub_head_socket.connect(service.get_pub_endpoint()));
         let staker = Staker::new(
-            try!(HashDigest::from_bytes(service.get_head_block().get_hash())),
-            service.get_head_block().get_block().get_timestamp());
+            try!(HashDigest::from_bytes(service.current_head_block().get_hash())),
+            service.current_head_block().get_block().get_timestamp());
 
         let mut peer_clients = Vec::<Client>::new();
         for endpoint in peers.iter() {
@@ -230,7 +234,8 @@ impl<Service: service::Service + HasStaker> Application<Service> {
 }
 
 #[unsafe_destructor]
-impl<Service: service::Service + HasStaker> Drop for Application<Service> {
+impl<Service: RpcService + StakerService + HeadBlockPubService> Drop
+    for Application<Service> {
     fn drop(&mut self) { self.sub_head_endpoint.shutdown().unwrap(); }
 }
 

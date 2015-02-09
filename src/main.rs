@@ -35,7 +35,7 @@ use getopts2::Options;
 use rustc_serialize::base64::{self, ToBase64};
 
 use crypto::{gen_keypair, PublicKey, slice_to_pk, slice_to_sk};
-use service::{Service, SimplesService};
+use service::{RpcService, SimplesService};
 use wallet::WalletExt;
 
 fn send_test_transactions() {
