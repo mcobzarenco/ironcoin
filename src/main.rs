@@ -16,7 +16,7 @@ mod balance;
 mod block;
 mod crypto;
 mod error;
-mod rpc;
+mod app;
 mod service;
 mod simples_pb;
 mod staking;
@@ -39,7 +39,7 @@ use service::{RpcService, SimplesService};
 use wallet::WalletExt;
 
 fn send_test_transactions() {
-    let mut client = rpc::Client::new("tcp://127.0.0.1:13337").ok().unwrap();
+    let mut client = app::Client::new("tcp://127.0.0.1:13337").ok().unwrap();
     let mut count = 1u32;
     let sleep_duration = Duration::milliseconds(100);
 
@@ -219,7 +219,7 @@ fn main() {
         }
         let transaction = tx_builder.build().unwrap();
         println!("{}", protobuf::text_format::print_to_string(&transaction));
-        let mut client = rpc::Client::new("tcp://127.0.0.1:13337").unwrap();
+        let mut client = app::Client::new("tcp://127.0.0.1:13337").unwrap();
         let mut request = simples_pb::PublishTransactionRequest::new();
         request.set_transaction(transaction);
         let response = client.pub_transaction(request).ok().unwrap();
@@ -239,7 +239,7 @@ fn main() {
             let service =
                 SimplesService::new(&balance_db[], &block_db[]).unwrap();
             let mut app =
-                rpc::Application::new(&rpc_endpoint[], peers, service).unwrap();
+                app::Application::new(&rpc_endpoint[], service, peers, wallet).unwrap();
             app.run().map_err(|err| {
                 println!("App existed with error '{}'", err.description());
             }).unwrap();
