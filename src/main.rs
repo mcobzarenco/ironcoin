@@ -114,8 +114,10 @@ fn main() {
     opts.optopt("f", "", "Load wallet file.", "FILE");
     opts.optmulti("t", "", "Specify a transfer.", "SRC:DEST:AMOUNT:OP_NUM");
     opts.optmulti("p", "", "Specify a peer.", "ENDPOINT");
-    opts.optopt("", "new", "Create and add a new address to the wallet.",
-                "[NAME[:DESC]]");
+    opts.optopt("", "add", "Add a pre-existing address to the wallet.",
+                "[NAME:]ADDRESS|SKEY");
+    opts.optflagopt("", "new", "Create and add a new address to the wallet.",
+                    "[NAME]");
     opts.optflagopt("", "ls", "List all addresses contained by the wallet.",
                     "[PATTERN]");
     opts.optopt("", "block-db", "Specify block database.", "PATH");
@@ -146,13 +148,12 @@ fn main() {
         wallet = wallet::load_from_file(&wallet_file[]).unwrap();
 
         if matches.opt_present("new") {
-            let name_desc_str = matches.opt_str("new").unwrap();
-            let name_desc:Vec<&str> = name_desc_str.split_str(":").collect();
-            if name_desc.len() != 2 {
-                println!("Specify [NAME:[DESCRIPTION]] for the new address.");
-                return;
-            }
-            let key = wallet.generate_new_key(name_desc[0], name_desc[1]);
+            let key = match matches.opt_str("new") {
+                Some(name) => wallet.generate_new_key(&name[]),
+                None => {
+                    let name = wallet.generate_name();
+                    wallet.generate_new_key(&name[])
+                }};
             println!("Created new address: {}",
                      key.get_public_key().to_base64(base64::STANDARD));
             wallet::save_to_file(&wallet_file[], &wallet).unwrap()

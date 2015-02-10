@@ -1,10 +1,12 @@
+use std::iter::count;
 use std::old_io::{File};
 
 use protobuf;
 use rustc_serialize::base64::{self, ToBase64};
 use sodiumoxide::crypto::sign::ed25519;
 
-use error::{SimplesResult};
+use crypto::{PublicKey, SecretKey};
+use error::SimplesResult;
 use simples_pb::{Wallet, WalletKey};
 
 fn load_proto_from_file<Message: protobuf::MessageStatic>(
@@ -40,8 +42,6 @@ pub fn pretty_format(wallet_key: &WalletKey) -> String {
     formatted.push_str(&format!(
         " name: {}\n", wallet_key.get_name())[]);
     formatted.push_str(&format!(
-        " desc: {}\n", wallet_key.get_description())[]);
-    formatted.push_str(&format!(
         "   pk: {}\n", pk.to_base64(base64::STANDARD))[]);
     formatted.push_str(&format!(
         "   sk: {}\n", sk.to_base64(base64::STANDARD))[]);
@@ -49,24 +49,55 @@ pub fn pretty_format(wallet_key: &WalletKey) -> String {
 }
 
 pub trait WalletExt {
-    fn generate_new_key(
-        &mut self, name: &str, description: &str) -> WalletKey;
+    fn add_key(&mut self, name: &str, public_key: &PublicKey,
+               secret_key: &SecretKey);
+    fn add_public_key(&mut self, name: &str, public_key: &PublicKey);
+    fn generate_name(&self) -> String;
+    fn generate_new_key(&mut self, name: &str) -> WalletKey;
     fn search_keys(&self, search_str: &str) -> Vec<&WalletKey>;
 }
 
 impl WalletExt for Wallet {
-    fn generate_new_key(
-        &mut self, name: &str, description: &str) -> WalletKey
-    {
+    fn add_key(&mut self, name: &str, public_key: &PublicKey,
+               secret_key: &SecretKey) {
+        let mut key = WalletKey::new();
+        key.set_public_key(public_key.0.to_vec());
+        key.set_secret_key(secret_key.0.to_vec());
+        key.set_name(String::from_str(name));
+        self.mut_keys().push(key);
+    }
+
+    fn add_public_key(&mut self, name: &str, public_key: &PublicKey) {
+        let mut key = WalletKey::new();
+        key.set_public_key(public_key.0.to_vec());
+        key.set_name(String::from_str(name));
+        self.mut_keys().push(key);
+    }
+
+    fn generate_new_key(&mut self, name: &str) -> WalletKey {
         let (pk, sk) = ed25519::gen_keypair();
         let mut key = WalletKey::new();
         key.set_public_key(pk.0.to_vec());
         key.set_secret_key(sk.0.to_vec());
         key.set_name(String::from_str(name));
-        key.set_description(String::from_str(description));
         let copy = key.clone();
         self.mut_keys().push(key);
         copy
+    }
+
+    fn generate_name(&self) -> String {
+        let already_exists = |name| -> bool {
+            let dups: Vec<&WalletKey> =
+                self.get_keys().iter().filter(|k| {
+                    k.get_name() == name
+                }).collect();
+            dups.len() > 0
+        };
+        let make_name = |i: usize| { format!("addr{}", i) };
+        make_name(count(1, 1)
+                  .take_while(|i| {
+                      already_exists(make_name(*i))
+                  }).last().unwrap_or(0) + 1)
     }
 
     fn search_keys(&self, search_str: &str) -> Vec<&WalletKey> {
