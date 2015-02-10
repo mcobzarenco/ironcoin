@@ -170,6 +170,8 @@ impl SimplesService {
                     let mut genesis = HashedBlock::new();
                     genesis.mut_signed_block().mut_block().set_previous(
                         HashDigest::from_u64(0).0.to_vec());
+                    genesis.mut_signed_block().mut_block().set_timestamp(
+                        now_utc().to_timespec().sec);
                     genesis.compute_hash();
                     let genesis_hash
                         = HashDigest::from_bytes(genesis.get_hash()).unwrap();
