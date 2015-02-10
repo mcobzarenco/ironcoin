@@ -122,10 +122,10 @@ impl<Store: KeyValueStore> BlockStore<Store> {
     pub fn get_head(&self) -> &HashedBlock { &self.head_block }
 
     pub fn get_head_hash(&self) -> HashDigest {
-        let maybe_digest = HashDigest::from_bytes(self.head_block.get_hash());
-        assert!(maybe_digest.is_ok(),
+        let maybe_hash = HashDigest::from_bytes(self.head_block.get_hash());
+        assert!(maybe_hash.is_ok(),
                 "FATAL: Corrupted DB, head block has invalid hash.");
-        maybe_digest.unwrap()
+        maybe_hash.unwrap()
     }
 
     pub fn set_head(&mut self, new_head: HashedBlock) -> SimplesResult<()> {
@@ -139,11 +139,10 @@ impl<Store: KeyValueStore> BlockStore<Store> {
     pub fn get_genesis(&self) -> &HashedBlock { &self.genesis_block }
 
     pub fn get_genesis_hash(&self) -> HashDigest {
-        let maybe_digest = HashDigest::from_bytes(
-            self.genesis_block.get_hash());
-        assert!(maybe_digest.is_ok(),
-                "FATAL: Corrupted DB, head block has invalid hash.");
-        maybe_digest.unwrap()
+        let maybe_hash = HashDigest::from_bytes(self.genesis_block.get_hash());
+        assert!(maybe_hash.is_ok(),
+                "FATAL: Corrupted DB, genesis block has invalid hash.");
+        maybe_hash.unwrap()
     }
 
     pub fn get_block(&self, hash: &HashDigest)
