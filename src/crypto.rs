@@ -18,6 +18,10 @@ use error::{SimplesError, SimplesResult};
 pub use sodiumoxide::crypto::hash::sha512::HASHBYTES;
 pub use sodiumoxide::crypto::sign::ed25519::{SecretKey, Signature};
 
+pub trait CryptoPrimitive {
+    fn bytes(&self) -> &[u8];
+}
+
 // HashDigest:
 
 pub struct HashDigest(pub [u8; HASHBYTES]);
@@ -51,23 +55,38 @@ impl HashDigest {
         }
     }
 
-    pub fn multiply_in_place(&mut self, other: &HashDigest) {
+    pub fn multiply_u8_in_place(&mut self, other: u8) {
         let mut quot = 0u16;
         for index in range(0, HASHBYTES) {
-            quot = self.0[index] as u16 * other.0[index] as u16 + quot;
+            quot = self.0[index] as u16 * other as u16 + quot;
             self.0[index] = (quot & 0x00ffu16) as u8;
             quot = quot >> 8;
         }
     }
+
+    pub fn add_in_place(&mut self, other: &HashDigest) {
+        let mut rem = 0u16;
+        for index in range(0, HASHBYTES) {
+            rem = self.0[index] as u16  + other.0[index] as u16 + rem;
+            self.0[index] = (rem & 0x00ffu16) as u8;
+            rem = rem >> 8;
+        }
+    }
+}
+
+impl CryptoPrimitive for HashDigest {
+    fn bytes(&self) -> &[u8] { &self.0[] }
 }
 
 impl Clone for HashDigest {
     fn clone(&self) -> HashDigest { HashDigest::from_bytes(&self.0[]).unwrap() }
 }
 
-impl PartialEq for HashDigest {
-    fn eq(&self, other: &HashDigest) -> bool { &self.0[] == &other.0[] }
+impl<C: CryptoPrimitive> PartialEq for C {
+    fn eq(&self, other: &C) -> bool { self.bytes() == other.bytes() }
 }
+
+// impl<C: CryptoPrimitive> Eq for C {}
 
 impl Eq for HashDigest {}
 
@@ -212,8 +231,6 @@ pub fn slice_to_signature(bytes: &[u8]) -> Option<Signature> {
 
 // Tests:
 
-use rustc_serialize::json;
-
 #[test]
 fn test_digest_from_u64() {
     let mut hash1 = HashDigest::from_u64(2100);
@@ -230,25 +247,52 @@ fn test_digest_from_u64() {
 }
 
 #[test]
-fn test_digest_multiply() {
-    let mut hash1 = HashDigest::from_u64(2100);
-    let hash2 = HashDigest::from_u64(65535);
-    hash1.multiply_in_place(&hash2);
-    assert!(hash1.0[0] == 204);
-    assert!(hash1.0[1] == 43);
-    assert!(hash1.0[2] == 8);
-    for i in range(3, HASHBYTES) {
-        assert!(hash1.0[i] == 0);
-    }
-
-    let mut hash3 = HashDigest::from_u64(65536);
-    println!("* hash3: {:?}", hash3);
-    println!("* hash3 == hash3: {}", hash3 == hash3);
-    println!("* hash3 > hash3: {}", hash3 > hash3);
-    println!("* hash3 > hash2: {}", hash3 > hash2);
-    println!("* hash3 < hash2: {}", hash3 < hash2);
-    // hash3.multiply
+fn test_digest_multiply_u8() {
+    let mut hash1 = HashDigest::from_u64(101);
+    let mut hash2 = HashDigest::from_u64(256);
+    hash1.multiply_u8_in_place(7);
+    hash2.multiply_u8_in_place(2);
+    assert!(HashDigest::from_u64(707) == hash1);
+    assert!(HashDigest::from_u64(512) == hash2);
+    hash1.multiply_u8_in_place(7);
+    hash2.multiply_u8_in_place(4);
+    assert!(HashDigest::from_u64(4949) == hash1);
+    assert!(HashDigest::from_u64(2048) == hash2);
 }
+
+#[test]
+fn test_digest_add() {
+    let mut hash1 = HashDigest::from_u64(101);
+    let mut hash2 = HashDigest::from_u64(256);
+    hash1.add_in_place(&HashDigest::from_u64(100001));
+    hash2.add_in_place(&HashDigest::from_u64(256));
+    assert!(HashDigest::from_u64(100102) == hash1);
+    assert!(HashDigest::from_u64(512) == hash2);
+    hash1.add_in_place(&HashDigest::from_u64(256));
+    hash2.add_in_place(&HashDigest::from_u64(1000));
+    assert!(HashDigest::from_u64(100358) == hash1);
+    assert!(HashDigest::from_u64(1512) == hash2);
+}
+
+// #[test]
+// fn test_digest_multiply() {
+//     let mut hash1 = HashDigest::from_u64(256);
+//     let mut hash2 = HashDigest::from_u64(256);
+//     hash1.multiply_in_place(&hash2);
+//     assert!(hash1.0[0] == 0);
+//     assert!(hash1.0[1] == 1);
+//     for i in range(1, HASHBYTES) {
+//         assert!(hash1.0[i] == 0);
+//     }
+
+//     let mut hash3 = HashDigest::from_u64(65536);
+//     println!("* hash3: {:?}", hash3);
+//     println!("* hash3 == hash3: {}", hash3 == hash3);
+//     println!("* hash3 > hash3: {}", hash3 > hash3);
+//     println!("* hash3 > hash2: {}", hash3 > hash2);
+//     println!("* hash3 < hash2: {}", hash3 < hash2);
+//     // hash3.multiply
+// }
 
 #[test]
 fn test_digest_ord() {
