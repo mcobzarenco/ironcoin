@@ -157,8 +157,8 @@ impl<Service: RpcService + StakerService + HeadBlockPubService>
             if poll_result.is_err() {
                 let err = poll_result.err().unwrap();
                 if err.kind == NanoErrorKind::Timeout {
-                    println!("Rpc timeout.");
-                    self.handle_timeout();
+                    try!(self.handle_timeout());
+                    continue;
                 } else {
                     println!("[app loop] Failed to read in request '{}'. Exiting.",
                              err);
