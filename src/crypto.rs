@@ -5,7 +5,7 @@ use std::hash::{self, Hash, Hasher};
 use std::slice::bytes::copy_memory;
 
 use protobuf::MessageStatic;
-use rustc_serialize::{self, Decodable, Decoder, Encodable, Encoder};
+use rustc_serialize::{self, Decodable, Decoder, Encodable, Encoder, json};
 use rustc_serialize::base64::{self, ToBase64};
 use sodiumoxide::crypto::hash::sha512;
 use sodiumoxide::crypto::sign::ed25519::{self,
@@ -202,31 +202,43 @@ pub fn verify_signed_message<M: MessageStatic>(
     verify_signature(public_key, msg_bytes, signature)
 }
 
-pub fn slice_to_pk(bytes: &[u8]) -> Option<PublicKey> {
-    if bytes.len() != PUBLICKEYBYTES { return None; }
+pub fn slice_to_pk(bytes: &[u8]) -> SimplesResult<PublicKey> {
+    if bytes.len() != PUBLICKEYBYTES {
+        return Err(SimplesError::new(
+            &format!("Invalid public key length {} != {} (requires)",
+                     bytes.len(), PUBLICKEYBYTES)[]));
+    }
     let mut key:[u8; PUBLICKEYBYTES] = [0; PUBLICKEYBYTES];
     for i in range(0, PUBLICKEYBYTES) {
         key[i] = bytes[i];
     }
-    Some(PublicKey(key))
+    Ok(PublicKey(key))
 }
 
-pub fn slice_to_sk(bytes: &[u8]) -> Option<SecretKey> {
-    if bytes.len() != SECRETKEYBYTES { return None; }
+pub fn slice_to_sk(bytes: &[u8]) -> SimplesResult<SecretKey> {
+    if bytes.len() != SECRETKEYBYTES {
+        return Err(SimplesError::new(
+            &format!("Invalid secret key length {} != {} (requires)",
+                     bytes.len(), SECRETKEYBYTES)[]));
+    }
     let mut key:[u8; SECRETKEYBYTES] = [0; SECRETKEYBYTES];
     for i in range(0, SECRETKEYBYTES) {
         key[i] = bytes[i];
     }
-    Some(SecretKey(key))
+    Ok(SecretKey(key))
 }
 
-pub fn slice_to_signature(bytes: &[u8]) -> Option<Signature> {
-    if bytes.len() != SIGNATUREBYTES { return None; }
+pub fn slice_to_signature(bytes: &[u8]) -> SimplesResult<Signature> {
+    if bytes.len() != SIGNATUREBYTES {
+        return Err(SimplesError::new(
+            &format!("Invalid signature length {} != {} (requires)",
+                     bytes.len(), SIGNATUREBYTES)[]));
+    }
     let mut sign:[u8; SIGNATUREBYTES] = [0; SIGNATUREBYTES];
     for i in range(0, SIGNATUREBYTES) {
         sign[i] = bytes[i];
     }
-    Some(Signature(sign))
+    Ok(Signature(sign))
 }
 
 // Tests:
