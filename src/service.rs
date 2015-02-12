@@ -7,11 +7,12 @@ use block::{BlockStore, HashedBlockExt};
 use crypto::HashDigest;
 use error::SimplesResult;
 use nanomsg::{Endpoint, Protocol, Socket};
-use simples_pb::{self, PublishTransactionRequest, PublishTransactionResponse,
-                 PublishBlockRequest, PublishBlockResponse, HashedBlock};
+use simples_pb::{self, HashedBlock,
+                 PublishTransactionRequest, PublishTransactionResponse,
+                 PublishBlockRequest, PublishBlockResponse, Transaction};
 use staking::BlockTemplate;
 use store::RocksStore;
-use tx::Transaction;
+use tx::TransactionExt;
 
 pub trait RpcService {
     fn pub_block(&mut self, request: PublishBlockRequest) ->

@@ -5,15 +5,16 @@ use protobuf::Message;
 
 use crypto::{PublicKey, SecretKey, sign, slice_to_signature, slice_to_pk,
              verify_signature};
-use simples_pb;
+use simples_pb::{Commitment, DetachedSignature, Transaction, Transfer};
+use error::{SimplesError, SimplesResult};
 
-pub trait Transaction {
-    fn check_signatures(&self) -> Result<(), &'static str>;
+pub trait TransactionExt {
+    fn check_signatures(&self) -> SimplesResult<()>;
 }
 
-impl Transaction for simples_pb::Transaction {
-    fn check_signatures(&self) -> Result<(), &'static str> {
-        let commit_bytes = &self.get_commit().write_to_bytes().unwrap()[];
+impl TransactionExt for Transaction {
+    fn check_signatures(&self) -> SimplesResult<()> {
+        let commit_bytes = &try!(self.get_commit().write_to_bytes())[];
         let mut sign_map = HashMap::<&[u8], &[u8]>::new();
         for sign in self.get_signatures().iter() {
             sign_map.insert(sign.get_public_key(), sign.get_payload());
@@ -21,13 +22,13 @@ impl Transaction for simples_pb::Transaction {
         for transfer in self.get_commit().get_transfers().iter() {
             match sign_map.get(transfer.get_source_pk()) {
                 Some(sign_bytes) => {
-                    let pk = slice_to_pk(transfer.get_source_pk()).unwrap();
-                    let signature = slice_to_signature(&sign_bytes[]).unwrap();
+                    let pk = try!(slice_to_pk(transfer.get_source_pk()));
+                    let signature = try!(slice_to_signature(&sign_bytes[]));
                     if !verify_signature(&pk, commit_bytes, &signature) {
-                        return Err("Invalid signature.")
+                        return Err(SimplesError::new("Invalid signature."))
                     }
                 },
-                None => return Err("Missing key.")
+                None => return Err(SimplesError::new("Missing key."))
             }
         }
         Ok(())
@@ -38,7 +39,7 @@ impl Transaction for simples_pb::Transaction {
 pub struct TransactionBuilder {
     transfer_secret_keys: Vec<SecretKey>,
     bounty_secret_key: Option<SecretKey>,
-    commit: simples_pb::Commitment
+    commit: Commitment
 }
 
 impl TransactionBuilder {
@@ -46,14 +47,14 @@ impl TransactionBuilder {
         TransactionBuilder {
             transfer_secret_keys: Vec::<SecretKey>::new(),
             bounty_secret_key: None,
-            commit: simples_pb::Commitment::new()
+            commit: Commitment::new()
         }
     }
 
     pub fn add_transfer(
         &mut self, sk: &SecretKey, source: &PublicKey, destination: &PublicKey,
         tokens: u64, op_index:u32) -> &mut Self {
-        let mut transfer = simples_pb::Transfer::new();
+        let mut transfer = Transfer::new();
         transfer.set_op_index(op_index);
         transfer.set_tokens(tokens);
         transfer.mut_source_pk().push_all(&source.0);
@@ -72,8 +73,8 @@ impl TransactionBuilder {
         self
     }
 
-    pub fn build(self) -> Result<simples_pb::Transaction, &'static str> {
-        let mut transaction = simples_pb::Transaction::new();
+    pub fn build(self) -> SimplesResult<Transaction> {
+        let mut transaction = Transaction::new();
         let commit_bytes = &self.commit.write_to_bytes().unwrap()[];
         for (transfer, secret_key) in self.commit.get_transfers().iter()
             .zip(self.transfer_secret_keys.iter())
@@ -83,12 +84,12 @@ impl TransactionBuilder {
             let pk = slice_to_pk(&pk_bytes[]).unwrap();
             match verify_signature(&pk, commit_bytes, &signature) {
                 true => {
-                    let mut sign = simples_pb::DetachedSignature::new();
+                    let mut sign = DetachedSignature::new();
                     sign.set_public_key(pk_bytes);
                     sign.set_payload(signature.0.to_vec());
                     transaction.mut_signatures().push(sign);
                 },
-                false => return Err("Invalid key for source account.")
+                false => return Err(SimplesError::new("Invalid key for source account."))
             }
         }
         transaction.set_commit(self.commit);
