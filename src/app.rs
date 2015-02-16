@@ -3,7 +3,6 @@ use std::time::Duration;
 
 use nanomsg::{Endpoint, PollRequest, Protocol, Socket, NanoErrorKind};
 use protobuf::{self, Message};
-use rustc_serialize::json;
 
 use block::HashedBlockExt;
 use crypto::HashDigest;
@@ -87,14 +86,14 @@ impl<Service: RpcService + StakerService + HeadBlockPubService>
         try!(sub_head_socket.subscribe(""));
         let sub_head_endpoint = try!(
             sub_head_socket.connect(service.get_pub_endpoint()));
-        let staker = Staker::new(
-            try!(HashDigest::from_bytes(service.current_head_block().get_hash())),
-            service.current_head_block().get_block().get_timestamp());
-
+        let head = try!(service.current_head_block());
+        let staker = Staker::new(staking_keys, try!(head.get_hash_digest()),
+                                 head.get_block().get_timestamp());
         let mut peer_clients = Vec::<Client>::new();
         for endpoint in peers.iter() {
             peer_clients.push(try!(Client::new(endpoint)));
         }
+        println!("head block timestamp: {}", head.get_block().get_timestamp());
 
         Ok(Application {
             endpoint: String::from_str(endpoint),
