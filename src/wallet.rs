@@ -9,7 +9,7 @@ use crypto::{PublicKey, SecretKey};
 use error::SimplesResult;
 use simples_pb::{Wallet, WalletKey};
 
-fn load_proto_from_file<Message: protobuf::MessageStatic>(
+pub fn load_proto_from_file<Message: protobuf::MessageStatic>(
     path: &str) -> SimplesResult<Message>
 {
     let mut proto_in = File::open(&Path::new(path));
@@ -17,7 +17,7 @@ fn load_proto_from_file<Message: protobuf::MessageStatic>(
     Ok(try!(protobuf::parse_from_bytes(&wallet_bytes[])))
 }
 
-fn save_proto_to_file<Message: protobuf::MessageStatic>(
+pub fn save_proto_to_file<Message: protobuf::MessageStatic>(
     path: &str, msg: &Message) -> SimplesResult<()>
 {
     let mut proto_out = File::create(&Path::new(path));
