@@ -50,6 +50,26 @@ message Transfer {
     optional bytes destination_pk = 4;
 }
 
+/*****  Messages for summarising the effect of a block  *****/
+
+message AddressPatch {
+    optional bytes public_key = 1;
+    optional uint64 before = 2;
+    optional uint64 after = 3;
+}
+
+message Balance {
+    optional bytes public_key = 1;
+    optional uint64 tokens = 2;
+    optional uint32 transaction_num = 3;
+}
+
+message BlockPatch {
+    repeated AddressPatch patches = 1;
+}
+
+/*****  Wallet Messages  *****/
+
 message Wallet {
     repeated WalletKey keys = 1;
 }
