@@ -14,6 +14,7 @@ extern crate "rustc-serialize" as rustc_serialize;
 
 mod balance;
 mod block;
+mod blocktree;
 mod crypto;
 mod error;
 mod app;
@@ -24,7 +25,8 @@ mod store;
 mod tx;
 mod wallet;
 
-use std::error::{Error};
+use std::error::Error;
+use std::old_io::File;
 use std::old_io::timer::sleep;
 use std::os;
 use std::str::FromStr;
@@ -32,11 +34,16 @@ use std::thread::Thread;
 use std::time::duration::Duration;
 
 use getopts2::Options;
-use rustc_serialize::base64::{self, ToBase64};
+use protobuf::Message;
+use rustc_serialize::base64::{self, FromBase64, ToBase64};
 
+use blocktree::{BlockTreeStore, GenesisBuilder};
 use crypto::{gen_keypair, PublicKey, slice_to_pk, slice_to_sk};
+use error::{SimplesResult, SimplesError};
 use service::{RpcService, SimplesService};
-use wallet::WalletExt;
+use simples_pb::HashedBlock;
+use store::RocksStore;
+use wallet::{load_proto_from_file, save_proto_to_file, WalletExt};
 
 fn send_test_transactions() {
     let mut client = app::Client::new("tcp://127.0.0.1:13337").ok().unwrap();
@@ -94,6 +101,41 @@ fn send_test_transactions() {
     }
 }
 
+fn create_genesis_block_from_cmdline(tx_strs: &[String])
+                                     -> SimplesResult<HashedBlock>
+{
+    let mut builder = GenesisBuilder::new();
+    for tx_str in tx_strs.iter() {
+        let transfer_parts: Vec<&str> = tx_str.split_str(":").collect();
+        if transfer_parts.len() != 2 {
+            return Err(SimplesError::new(
+                "A genesis transfer needs to be specified as ADDR:AMOUNT"));
+        };
+
+        let maybe_destination =
+            slice_to_pk(&try!(FromBase64::from_base64(transfer_parts[0]))[]);
+        if maybe_destination.is_err() {
+            return Err(SimplesError::new(&format!(
+                "Could not parse \"{}\" as an address.", transfer_parts[0])[]));
+        }
+        let destination = maybe_destination.unwrap();
+
+        let maybe_amount = FromStr::from_str(transfer_parts[1]);
+        if maybe_amount.is_err() {
+            return Err(SimplesError::new(&format!(
+                "Could not parse \"{}\" as an amount.", transfer_parts[1])[]));
+        }
+        let amount: u64 = maybe_amount.unwrap();
+        builder.add_transfer(destination, amount);
+    }
+    Ok(builder.build())
+}
+
+fn create_block_store(block_db: &str, genesis: Option<&HashedBlock>) ->
+    SimplesResult<BlockTreeStore<RocksStore>> {
+    BlockTreeStore::new(try!(RocksStore::new(block_db)), genesis)
+}
+
 fn print_usage(program: &str, opts: Options) {
     let brief = format!("Usage: {} [options]", program);
     print!("{}", opts.usage(brief.as_slice()));
@@ -120,8 +162,13 @@ fn main() {
                     "[NAME]");
     opts.optflagopt("", "ls", "List all addresses contained by the wallet.",
                     "[PATTERN]");
-    opts.optopt("", "block-db", "Specify block database.", "PATH");
+    opts.optopt("g", "", "Set genesis block from file.", "PATH");
+    opts.optopt("", "blocktree", "Specify blocktree database.", "PATH");
     opts.optopt("", "balance-db", "Specify balance database.", "PATH");
+    opts.optopt("", "new-genesis", "Create a genesis block and write it to file.
+Use multiple times to specify genesis transactions.", "PATH");
+    opts.optmulti("", "gtx", "Use with --create-genesis. The argument can be
+used multiple times to specify genesis transactions.", "ADDR:AMOUNT");
     let matches = match opts.parse(args.tail()) {
         Ok(m) => { m }
         Err(f) => {
@@ -226,24 +273,74 @@ fn main() {
         let response = client.pub_transaction(request).ok().unwrap();
         println!("Response status: {:?}", response);
     }
+    if matches.opt_present("new-genesis") {
+        let genesis_path = matches.opt_str("new-genesis").unwrap();
+        println!("Writing new genesis block to \"{}\"", genesis_path);
+        let maybe_genesis =
+            create_genesis_block_from_cmdline(&matches.opt_strs("gtx")[]);
+        if maybe_genesis.is_err() {
+            println!("{}", maybe_genesis.unwrap_err());
+            return;
+        }
+        let genesis_block = maybe_genesis.unwrap();
+        let mut genesis_out = File::create(&Path::new(genesis_path.clone()));
+        let genesis_bytes = genesis_block.write_to_bytes().unwrap();
+        let write_result = genesis_out.write_all(&genesis_bytes[]);
+        if write_result.is_err() {
+            println!("Could not write genesis to file \"{}\"", genesis_path);
+            return;
+        }
+    }
+        // match matches.opt_str("genesis") {
+        //     Some(path) => {
+        //         let genesis_out = File::open(&Path::new(path));
+        //         let genesis_bytes =
+        //             block_db.get_genesis().write_to_bytes().unwrap();
+        //         let write_result = genesis_out.write_all(&genesis_bytes[]);
+        //         if write_result.is_err() {
+        //             println!("Could not write genesis to file \"{}\"", path);
+        //             return;
+        //         }},
+        //     None => {}
+        // }
     if matches.opt_present("d") {
-        let block_db = matches.opt_str("block-db")
+        let blocktree_path = matches.opt_str("blocktree")
             .unwrap_or(String::from_str("block.rdb"));
         let balance_db = matches.opt_str("balance-db")
             .unwrap_or(String::from_str("balance.rdb"));
+
+        let genesis_block: Option<HashedBlock> = match matches.opt_str("g") {
+            Some(path) => {
+                let maybe_genesis = load_proto_from_file(&path[]);
+                if maybe_genesis.is_err() {
+                    println!("ERROR: Could not read genesis block from file {}", path);
+                    return;
+                }
+                Some(maybe_genesis.unwrap())
+            },
+            None => None
+        };
+        let blocktree;
+        match create_block_store(&blocktree_path[], genesis_block.as_ref()) {
+            Ok(inner_blocktree) => { blocktree = inner_blocktree; },
+            Err(err) => {
+                println!("FATAL: Could not instantiate a blocktree from {}.\n{}",
+                         blocktree_path, err);
+                return;
+            }
+        };
 
         let mut peers = vec![];
         if matches.opt_present("p") {
             peers.push_all(&matches.opt_strs("p"));
         }
-        Thread::scoped(move || {
-            let service =
-                SimplesService::new(&balance_db[], &block_db[]).unwrap();
-            let mut app =
-                app::Application::new(&rpc_endpoint[], service, peers, wallet).unwrap();
-            app.run().map_err(|err| {
-                println!("App existed with error '{}'", err.description());
-            }).unwrap();
+
+        let service =
+            SimplesService::new(&balance_db[], blocktree).unwrap();
+        let mut app =
+            app::Application::new(&rpc_endpoint[], service, peers, wallet).unwrap();
+        app.run().map_err(|err| {
+            println!("App existed with error '{}'", err.description());
         });
     }
 }

@@ -3,7 +3,8 @@ use time::now_utc;
 use uuid::Uuid;
 
 use balance::BalanceStore;
-use block::{BlockStore, HashedBlockExt};
+use block::HashedBlockExt;
+use blocktree::BlockTreeStore;
 use crypto::HashDigest;
 use error::SimplesResult;
 use nanomsg::{Endpoint, Protocol, Socket};
@@ -28,12 +29,12 @@ pub trait StakerService {
 
 pub trait HeadBlockPubService {
     fn get_pub_endpoint(&self) -> &str;
-    fn current_head_block(&self) -> &HashedBlock;
+    fn current_head_block(&self) -> SimplesResult<HashedBlock>;
 }
 
 pub struct SimplesService {
     balance_store: BalanceStore<RocksStore>,
-    block_store: BlockStore<RocksStore>,
+    block_store: BlockTreeStore<RocksStore>,
     pending_transactions: Vec<simples_pb::Transaction>,
     pub_block_socket: Socket,
     pub_block_endpoint: Endpoint,
@@ -44,7 +45,7 @@ impl StakerService for SimplesService {
     fn on_successful_stake(&mut self, template: BlockTemplate)
                            -> SimplesResult<()>
     {
-        let prev_head_hash = self.block_store.get_head_hash();
+        let prev_head_hash = try!(self.block_store.get_head_hash());
         if template.previous_block != prev_head_hash {
             println!("Ignoring block staked with prev: {} != head: {}.",
                      template.previous_block, prev_head_hash);
@@ -95,7 +96,9 @@ impl StakerService for SimplesService {
 impl HeadBlockPubService for SimplesService {
     fn get_pub_endpoint(&self) -> &str { &self.pub_block_endpoint_str[] }
 
-    fn current_head_block(&self) -> &HashedBlock { self.block_store.get_head() }
+    fn current_head_block(&self) -> SimplesResult<HashedBlock> {
+        self.block_store.get_head()
+    }
 }
 
 impl RpcService for SimplesService {
@@ -103,8 +106,7 @@ impl RpcService for SimplesService {
         SimplesResult<PublishBlockResponse>
     {
         use simples_pb::PublishBlockResponse_Status as ResponseStatus;
-
-        println!("Got a block: {:?}", request);
+        println!("Got a block!");
 
         let mut response = PublishBlockResponse::new();
         if !request.has_block() {
@@ -118,7 +120,41 @@ impl RpcService for SimplesService {
             response.set_status(ResponseStatus::INVALID_BLOCK);
             return Ok(response);
         }
-        println!("Block is valid;");
+        let block_hash =
+            HashDigest::from_bytes(hashed_block.get_hash()).unwrap();
+        println!("Block is valid ({} tx), hash={}",
+                 hashed_block.get_block().get_transactions().len(),
+                 HashDigest::from_bytes(hashed_block.get_hash()).unwrap());
+        if block_hash == try!(self.block_store.get_head_hash()) {
+            println!("Head is already there!");
+            response.set_status(ResponseStatus::OK);
+            return Ok(response);
+        }
+
+        let maybe_prev_head = HashDigest::from_bytes(
+            hashed_block.get_block().get_previous());
+        if maybe_prev_head.is_err() {
+            println!("Received a block with invalid previous from peer");
+            response.set_status(ResponseStatus::INVALID_BLOCK);
+            return Ok(response);
+        }
+        if maybe_prev_head.unwrap() == try!(self.block_store.get_head_hash()) {
+            println!("Block comes after head. Trying to fast-forward.");
+            {
+                let mut cache = self.balance_store.mutate();
+                for tx in self.pending_transactions.iter() {
+                    let apply_result = cache.apply_transaction(tx);
+                    if apply_result.is_err() {
+                        println!("Block contains invalid tx. Ignoring");
+                        response.set_status(ResponseStatus::INVALID_BLOCK);
+                        return Ok(response);
+                    }
+                }
+                try!(cache.flush());
+            }
+            try!(self.block_store.set_head(hashed_block.clone()));
+            self.publish_block(hashed_block.clone());
+        }
         response.set_status(ResponseStatus::OK);
         Ok(response)
     }
@@ -159,30 +195,30 @@ impl RpcService for SimplesService {
 }
 
 impl SimplesService {
-    pub fn new(balance_db: &str, block_db: &str)
+    pub fn new(balance_db: &str, block_store: BlockTreeStore<RocksStore>)
                // staking_keys: &[(SecretKey, PublicKey)])
                -> SimplesResult<SimplesService>
     {
         let balance_store = BalanceStore::new(try!(RocksStore::new(balance_db)));
-        let block_store =
-            match BlockStore::new_from_existing(try!(RocksStore::new(block_db))) {
-                Ok(store) => store,
-                Err(_) => {
-                    let mut genesis = HashedBlock::new();
-                    genesis.mut_signed_block().mut_block().set_previous(
-                        HashDigest::from_u64(0).0.to_vec());
-                    genesis.mut_signed_block().mut_block().set_timestamp(
-                        now_utc().to_timespec().sec);
-                    genesis.compute_hash();
-                    let genesis_hash
-                        = HashDigest::from_bytes(genesis.get_hash()).unwrap();
+        // let block_store =
+        //     match BlockTreeStore::new(try!(RocksStore::new(block_db))) {
+        //         Ok(store) => store,
+        //         Err(_) => {
+        //             let mut genesis = HashedBlock::new();
+        //             genesis.mut_signed_block().mut_block().set_previous(
+        //                 HashDigest::from_u64(0).0.to_vec());
+        //             genesis.mut_signed_block().mut_block().set_timestamp(
+        //                 now_utc().to_timespec().sec);
+        //             genesis.compute_hash();
+        //             let genesis_hash
+        //                 = HashDigest::from_bytes(genesis.get_hash()).unwrap();
 
-                    println!("No genesis block, creating one: {}",
-                             genesis_hash);
-                    try!(BlockStore::new_with_genesis(
-                        try!(RocksStore::new(block_db)), &genesis))
-                }
-            };
+        //             println!("No genesis block, creating one: {}",
+        //                      genesis_hash);
+        //             try!(BlockTreeStore::new_with_genesis(
+        //                 try!(RocksStore::new(block_db)), &genesis))
+        //         }
+        //     };
         println!("Head block: {:?}", block_store.get_head_hash());
 
         let pub_endpoint_str = format!("inproc://{}", Uuid::new_v4().to_string());

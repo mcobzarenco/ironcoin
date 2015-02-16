@@ -1,5 +1,6 @@
 extern crate rocksdb;
 
+use std::collections::hash_map::{self, HashMap};
 use std::error::{FromError};
 use std::ops::Deref;
 use std::vec;
@@ -46,6 +47,20 @@ impl KeyValueStore for RocksStore {
     }
 }
 
+impl KeyValueStore for HashMap<Vec<u8>, Vec<u8>> {
+    fn get_bytes(&self, key: &[u8]) -> SimplesResult<Option<Vec<u8>>> {
+        Ok(match self.get(&key.to_vec()) {
+            Some(bytes) => Some(bytes.clone()),
+            None => None
+        })
+    }
+
+    fn set_bytes(&mut self, key: &[u8], value: &[u8]) -> SimplesResult<()> {
+        self.insert(key.to_vec(), value.to_vec());
+        Ok(())
+    }
+}
+
 pub struct ProtoStore<Store: KeyValueStore> {
     pub kv_store: Store
 }
@@ -53,7 +68,7 @@ pub struct ProtoStore<Store: KeyValueStore> {
 impl<Store: KeyValueStore> ProtoStore<Store> {
     pub fn new(kv_store: Store) -> Self { ProtoStore { kv_store: kv_store } }
 
-    pub fn get<Message: MessageStatic>
+    pub fn get_message<Message: MessageStatic>
         (&self, key: &[u8]) -> SimplesResult<Option<Message>> {
         Ok(match try!(self.kv_store.get_bytes(key)) {
             Some(bytes) => Some(try!(protobuf::parse_from_bytes(&bytes[]))),
@@ -61,7 +76,7 @@ impl<Store: KeyValueStore> ProtoStore<Store> {
         })
     }
 
-    pub fn set<Message: MessageStatic>
+    pub fn set_message<Message: MessageStatic>
         (&mut self, key: &[u8], message: &Message) -> SimplesResult<()>
     {
         let msg_bytes = &try!(message.write_to_bytes())[];
