@@ -45,6 +45,7 @@ trait ConvertToSimplesError: Error {}
 impl ConvertToSimplesError for protobuf::error::ProtobufError {}
 impl ConvertToSimplesError for ::std::old_io::IoError {}
 impl ConvertToSimplesError for rustc_serialize::json::EncoderError {}
+impl ConvertToSimplesError for rustc_serialize::base64::FromBase64Error {}
 
 impl<Err: ConvertToSimplesError> FromError<Err> for SimplesError {
     fn from_error(err: Err) -> SimplesError {
