@@ -87,7 +87,7 @@ impl<Service: RpcService + StakerService + HeadBlockPubService>
         let sub_head_endpoint = try!(
             sub_head_socket.connect(service.get_pub_endpoint()));
         let head = try!(service.current_head_block());
-        let staker = Staker::new(staking_keys, try!(head.get_hash_digest()),
+        let staker = Staker::new(staking_keys, try!(head.decode_hash()),
                                  head.get_block().get_timestamp());
         let mut peer_clients = Vec::<Client>::new();
         for endpoint in peers.iter() {

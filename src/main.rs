@@ -1,7 +1,9 @@
 #![feature(collections)]
 #![feature(core)]
+#![feature(hash)]
 #![feature(io)]
 #![feature(os)]
+#![feature(path)]
 #![feature(std_misc)]
 #![feature(unsafe_destructor)]
 extern crate getopts2;
@@ -37,7 +39,8 @@ use getopts2::Options;
 use protobuf::Message;
 use rustc_serialize::base64::{self, FromBase64, ToBase64};
 
-use blocktree::{BlockTreeStore, GenesisBuilder};
+use block::GenesisBuilder;
+use blocktree::BlockTreeStore;
 use crypto::{gen_keypair, PublicKey, slice_to_pk, slice_to_sk};
 use error::{SimplesResult, SimplesError};
 use service::{RpcService, SimplesService};
@@ -157,14 +160,13 @@ fn main() {
     opts.optmulti("t", "", "Specify a transfer.", "SRC:DEST:AMOUNT:OP_NUM");
     opts.optmulti("p", "", "Specify a peer.", "ENDPOINT");
     opts.optopt("", "add", "Add a pre-existing address to the wallet.",
-                "[NAME:]ADDRESS|SKEY");
+                "[NAME:]ADDR|SKEY");
     opts.optflagopt("", "new", "Create and add a new address to the wallet.",
-                    "[NAME]");
+                    "NAME");
     opts.optflagopt("", "ls", "List all addresses contained by the wallet.",
-                    "[PATTERN]");
+                    "PATTERN");
     opts.optopt("g", "", "Set genesis block from file.", "PATH");
     opts.optopt("", "blocktree", "Specify blocktree database.", "PATH");
-    opts.optopt("", "balance-db", "Specify balance database.", "PATH");
     opts.optopt("", "new-genesis", "Create a genesis block and write it to file.
 Use multiple times to specify genesis transactions.", "PATH");
     opts.optmulti("", "gtx", "Use with --create-genesis. The argument can be
@@ -306,8 +308,6 @@ used multiple times to specify genesis transactions.", "ADDR:AMOUNT");
     if matches.opt_present("d") {
         let blocktree_path = matches.opt_str("blocktree")
             .unwrap_or(String::from_str("block.rdb"));
-        let balance_db = matches.opt_str("balance-db")
-            .unwrap_or(String::from_str("balance.rdb"));
 
         let genesis_block: Option<HashedBlock> = match matches.opt_str("g") {
             Some(path) => {
@@ -336,7 +336,7 @@ used multiple times to specify genesis transactions.", "ADDR:AMOUNT");
         }
 
         let service =
-            SimplesService::new(&balance_db[], blocktree).unwrap();
+            SimplesService::new(blocktree).unwrap();
         let mut app =
             app::Application::new(&rpc_endpoint[], service, peers, wallet).unwrap();
         app.run().map_err(|err| {
