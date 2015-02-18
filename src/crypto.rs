@@ -153,14 +153,15 @@ pub fn verify_signature(
 }
 
 impl PublicKey {
-    pub fn from_bytes(bytes: &[u8]) -> Option<PublicKey> {
-        match bytes.len() != PUBLICKEYBYTES {
-            true => None,
-            false => {
-                let mut digest = PublicKey([0; PUBLICKEYBYTES]);
-                copy_memory(&mut digest.0[], bytes);
-                Some(digest)
-            }
+    pub fn from_bytes(bytes: &[u8]) -> SimplesResult<PublicKey> {
+        if bytes.len() != PUBLICKEYBYTES {
+            Err(SimplesError::new(&format!(
+                "Invalid length for a public key {} != {} (required).",
+                bytes.len(), PUBLICKEYBYTES)))
+        } else {
+            let mut digest = PublicKey([0; PUBLICKEYBYTES]);
+            copy_memory(&mut digest.0[], bytes);
+            Ok(digest)
         }
     }
 }
@@ -173,6 +174,22 @@ impl Eq for PublicKey {}
 
 impl<H: Hasher + hash::Writer> Hash<H> for PublicKey {
     fn hash(&self, state: &mut H) { state.write(&self.0[]); }
+}
+
+impl Clone for PublicKey {
+    fn clone(&self) -> PublicKey { PublicKey::from_bytes(&self.0[]).unwrap() }
+}
+
+impl fmt::Debug for PublicKey {
+    fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        write!(formatter, "{:?}", &self.0[])
+    }
+}
+
+impl fmt::Display for PublicKey {
+    fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        write!(formatter, "{}", &self.0[].to_base64(base64::STANDARD))
+    }
 }
 
 // SecretKey:
