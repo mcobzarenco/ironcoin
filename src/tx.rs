@@ -9,11 +9,11 @@ use simples_pb::{Commitment, DetachedSignature, Transaction, Transfer};
 use error::{SimplesError, SimplesResult};
 
 pub trait TransactionExt {
-    fn check_signatures(&self) -> SimplesResult<()>;
+    fn verify_signatures(&self) -> SimplesResult<()>;
 }
 
 impl TransactionExt for Transaction {
-    fn check_signatures(&self) -> SimplesResult<()> {
+    fn verify_signatures(&self) -> SimplesResult<()> {
         let commit_bytes = &try!(self.get_commit().write_to_bytes())[];
         let mut sign_map = HashMap::<&[u8], &[u8]>::new();
         for sign in self.get_signatures().iter() {
@@ -93,7 +93,7 @@ impl TransactionBuilder {
             }
         }
         transaction.set_commit(self.commit);
-        try!(transaction.check_signatures());
+        try!(transaction.verify_signatures());
         Ok(transaction)
     }
 }

@@ -2,7 +2,6 @@ use protobuf::Message;
 use time::now_utc;
 use uuid::Uuid;
 
-use balance::BalanceStore;
 use block::HashedBlockExt;
 use blocktree::BlockTreeStore;
 use crypto::HashDigest;
@@ -33,8 +32,7 @@ pub trait HeadBlockPubService {
 }
 
 pub struct SimplesService {
-    balance_store: BalanceStore<RocksStore>,
-    block_store: BlockTreeStore<RocksStore>,
+    blocktree: BlockTreeStore<RocksStore>,
     pending_transactions: Vec<simples_pb::Transaction>,
     pub_block_socket: Socket,
     pub_block_endpoint: Endpoint,
@@ -45,7 +43,7 @@ impl StakerService for SimplesService {
     fn on_successful_stake(&mut self, template: BlockTemplate)
                            -> SimplesResult<()>
     {
-        let prev_head_hash = try!(self.block_store.get_head_hash());
+        let prev_head_hash = try!(self.blocktree.get_head_hash());
         if template.previous_block != prev_head_hash {
             println!("Ignoring block staked with prev: {} != head: {}.",
                      template.previous_block, prev_head_hash);
@@ -58,15 +56,15 @@ impl StakerService for SimplesService {
             block.set_previous(prev_head_hash.0.to_vec());
         }
         let head_hash = hashed_block.compute_hash();
-        try!(self.block_store.set_head(hashed_block.clone()));
-
+        try!(self.blocktree.insert_block(&hashed_block));
+        try!(self.blocktree.set_head(&head_hash));
         {
-            let mut cache = self.balance_store.mutate();
+            let mut cache = self.blocktree.tx_cache();
             for tx in self.pending_transactions.iter() {
                 let apply_result = cache.apply_transaction(tx);
                 assert!(apply_result.is_ok());
             }
-            try!(cache.flush());
+            // try!(cache.flush());
         }
         // try!(self.staker_head.as_mut().unwrap().set_head_block(
         //     head_hash.clone(), prev_head_hash.clone(), now_utc().to_timespec().sec));
@@ -97,7 +95,7 @@ impl HeadBlockPubService for SimplesService {
     fn get_pub_endpoint(&self) -> &str { &self.pub_block_endpoint_str[] }
 
     fn current_head_block(&self) -> SimplesResult<HashedBlock> {
-        self.block_store.get_head()
+        self.blocktree.get_head()
     }
 }
 
@@ -125,7 +123,7 @@ impl RpcService for SimplesService {
         println!("Block is valid ({} tx), hash={}",
                  hashed_block.get_block().get_transactions().len(),
                  HashDigest::from_bytes(hashed_block.get_hash()).unwrap());
-        if block_hash == try!(self.block_store.get_head_hash()) {
+        if block_hash == try!(self.blocktree.get_head_hash()) {
             println!("Head is already there!");
             response.set_status(ResponseStatus::OK);
             return Ok(response);
@@ -138,10 +136,10 @@ impl RpcService for SimplesService {
             response.set_status(ResponseStatus::INVALID_BLOCK);
             return Ok(response);
         }
-        if maybe_prev_head.unwrap() == try!(self.block_store.get_head_hash()) {
+        if maybe_prev_head.unwrap() == try!(self.blocktree.get_head_hash()) {
             println!("Block comes after head. Trying to fast-forward.");
             {
-                let mut cache = self.balance_store.mutate();
+                let mut cache = self.blocktree.tx_cache();
                 for tx in self.pending_transactions.iter() {
                     let apply_result = cache.apply_transaction(tx);
                     if apply_result.is_err() {
@@ -150,9 +148,10 @@ impl RpcService for SimplesService {
                         return Ok(response);
                     }
                 }
-                try!(cache.flush());
+                // try!(cache.flush());
             }
-            try!(self.block_store.set_head(hashed_block.clone()));
+            // try!(self.blocktree.set_head(hashed_block.clone()));
+            // try!(self.blocktree.set_head(hashed_block.));
             self.publish_block(hashed_block.clone());
         }
         response.set_status(ResponseStatus::OK);
@@ -170,13 +169,13 @@ impl RpcService for SimplesService {
             return Ok(response);
         }
         let transaction = request.take_transaction();
-        let checked = transaction.check_signatures();
+        let checked = transaction.verify_signatures();
         if checked.is_err() {
             response.set_status(ResponseStatus::INVALID_REQUEST);
             return Ok(response);
         }
 
-        let mut cache = self.balance_store.mutate();
+        let mut cache = self.blocktree.tx_cache();
         for tx in self.pending_transactions.iter() {
             let apply_result = cache.apply_transaction(tx);
             assert!(apply_result.is_ok());
@@ -195,39 +194,16 @@ impl RpcService for SimplesService {
 }
 
 impl SimplesService {
-    pub fn new(balance_db: &str, block_store: BlockTreeStore<RocksStore>)
-               // staking_keys: &[(SecretKey, PublicKey)])
+    pub fn new(blocktree: BlockTreeStore<RocksStore>)
                -> SimplesResult<SimplesService>
     {
-        let balance_store = BalanceStore::new(try!(RocksStore::new(balance_db)));
-        // let block_store =
-        //     match BlockTreeStore::new(try!(RocksStore::new(block_db))) {
-        //         Ok(store) => store,
-        //         Err(_) => {
-        //             let mut genesis = HashedBlock::new();
-        //             genesis.mut_signed_block().mut_block().set_previous(
-        //                 HashDigest::from_u64(0).0.to_vec());
-        //             genesis.mut_signed_block().mut_block().set_timestamp(
-        //                 now_utc().to_timespec().sec);
-        //             genesis.compute_hash();
-        //             let genesis_hash
-        //                 = HashDigest::from_bytes(genesis.get_hash()).unwrap();
-
-        //             println!("No genesis block, creating one: {}",
-        //                      genesis_hash);
-        //             try!(BlockTreeStore::new_with_genesis(
-        //                 try!(RocksStore::new(block_db)), &genesis))
-        //         }
-        //     };
-        println!("Head block: {:?}", block_store.get_head_hash());
+        println!("Head block: {:?}", blocktree.get_head_hash());
 
         let pub_endpoint_str = format!("inproc://{}", Uuid::new_v4().to_string());
         let mut pub_socket = try!(Socket::new(Protocol::Pub));
         let pub_endpoint = try!(pub_socket.bind(&pub_endpoint_str[]));
-
         Ok(SimplesService {
-            balance_store: balance_store,
-            block_store: block_store,
+            blocktree: blocktree,
             pending_transactions: vec![],
             pub_block_socket: pub_socket,
             pub_block_endpoint: pub_endpoint,

@@ -61,14 +61,23 @@ impl KeyValueStore for HashMap<Vec<u8>, Vec<u8>> {
     }
 }
 
-pub struct ProtoStore<Store: KeyValueStore> {
-    pub kv_store: Store
+pub trait ProtobufStore {
+    fn get_message<Message: MessageStatic>(
+        &self, key: &[u8]) -> SimplesResult<Option<Message>>;
+    fn set_message<Message: MessageStatic>
+        (&mut self, key: &[u8], message: &Message) -> SimplesResult<()>;
 }
 
-impl<Store: KeyValueStore> ProtoStore<Store> {
-    pub fn new(kv_store: Store) -> Self { ProtoStore { kv_store: kv_store } }
+pub struct MessageStore<Store: KeyValueStore> {
+    kv_store: Store
+}
 
-    pub fn get_message<Message: MessageStatic>
+impl<Store: KeyValueStore> MessageStore<Store> {
+    pub fn new(kv_store: Store) -> Self { MessageStore { kv_store: kv_store } }
+}
+
+impl<Store: KeyValueStore> ProtobufStore for MessageStore<Store> {
+    fn get_message<Message: MessageStatic>
         (&self, key: &[u8]) -> SimplesResult<Option<Message>> {
         Ok(match try!(self.kv_store.get_bytes(key)) {
             Some(bytes) => Some(try!(protobuf::parse_from_bytes(&bytes[]))),
@@ -76,10 +85,20 @@ impl<Store: KeyValueStore> ProtoStore<Store> {
         })
     }
 
-    pub fn set_message<Message: MessageStatic>
+    fn set_message<Message: MessageStatic>
         (&mut self, key: &[u8], message: &Message) -> SimplesResult<()>
     {
         let msg_bytes = &try!(message.write_to_bytes())[];
         Ok(try!(self.kv_store.set_bytes(key, msg_bytes)))
+    }
+}
+
+impl<Store: KeyValueStore> KeyValueStore for MessageStore<Store> {
+    fn get_bytes(&self, key: &[u8]) -> SimplesResult<Option<Vec<u8>>> {
+        self.kv_store.get_bytes(key)
+    }
+
+    fn set_bytes(&mut self, key: &[u8], value: &[u8]) -> SimplesResult<()> {
+        self.kv_store.set_bytes(key, value)
     }
 }
