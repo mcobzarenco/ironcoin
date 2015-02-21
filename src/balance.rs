@@ -2,57 +2,10 @@ use std::cell::RefCell;
 use std::collections::hash_map::{self, HashMap};
 use std::fmt;
 
-use rustc_serialize::base64::{self, ToBase64};
-
 use crypto::PublicKey;
 use block::HashedBlockExt;
 use error::{SimplesError, SimplesResult};
-use simples_pb::{Balance, BalancePatch, BlockPatch, HashedBlock,
-                 Transaction, Transfer};
-
-pub fn make_genesis_patch(genesis: &HashedBlock) -> SimplesResult<BlockPatch> {
-    try!(genesis.verify());
-    let txes = genesis.get_block().get_transactions();
-    match txes.len() {
-        0 => Ok(BlockPatch::new()),
-        1 => {
-            let mut cache = HashMap::<PublicKey, u64>::new();
-            let commit = txes[0].get_commit();
-            for transfer in commit.get_transfers() {
-                let destination =
-                    try!(PublicKey::from_bytes(transfer.get_destination_pk()));
-                match cache.entry(destination) {
-                    hash_map::Entry::Occupied(mut tokens) => {
-                        let new_balance = tokens.get() + transfer.get_tokens();
-                        tokens.insert(new_balance);
-                    },
-                    hash_map::Entry::Vacant(tokens) => {
-                        tokens.insert(transfer.get_tokens());
-                    }
-                };
-            }
-            let mut block_patch = BlockPatch::new();
-            for (address, tokens) in cache.into_iter() {
-                let mut before = Balance::new();
-                before.set_tokens(0u64);
-                before.set_op_index(0u32);
-
-                let mut after = Balance::new();
-                after.set_tokens(tokens);
-                after.set_op_index(0u32);
-
-                let mut patch = BalancePatch::new();
-                patch.set_public_key(address.0.to_vec());
-                patch.set_before(before);
-                patch.set_after(after);
-                block_patch.mut_patches().push(patch);
-            }
-            Ok(block_patch)
-        },
-        _ => Err(SimplesError::new(
-            "Genesis block must contain at most 1 transaction."))
-    }
-}
+use simples_pb::{Balance, BalancePatch, HashedBlock, Transaction, Transfer};
 
 pub trait BalancePatchExt {
     fn decode_public_key(&self) -> SimplesResult<PublicKey>;
@@ -232,57 +185,6 @@ impl<'a, LedgerReadOnly: 'a + LedgerReader> LedgerWriter
 
 /*****  Tests  *****/
 
-#[test]
-fn test_make_genesis_patch_empty() {
-    use block::GenesisBuilder;
-
-    let builder = GenesisBuilder::new();
-    let genesis = builder.build();
-    let maybe_patch = make_genesis_patch(&genesis);
-    assert!(maybe_patch.is_ok());
-    assert!(0 == maybe_patch.unwrap().get_patches().len());
-}
-
-#[test]
-fn test_make_genesis_patch_non_unqiue_dest() {
-    use std::iter::FromIterator;
-    use block::GenesisBuilder;
-    use crypto::gen_keypair;
-
-    let (pk1, _) = gen_keypair();
-    let (pk2, _) = gen_keypair();
-    let mut builder = GenesisBuilder::new();
-    builder.add_transfer(pk1.clone(), 101);
-    builder.add_transfer(pk2.clone(), 271);
-    builder.add_transfer(pk1.clone(), 5000);
-    let genesis = builder.build();
-    let maybe_patch = make_genesis_patch(&genesis);
-    assert!(maybe_patch.is_ok());
-    assert!(2 == maybe_patch.as_ref().unwrap().get_patches().len());
-    let patch_map: HashMap<PublicKey, BalancePatch> =
-        FromIterator::from_iter(maybe_patch.unwrap().get_patches().iter().map(
-            |patch| {(PublicKey::from_bytes(patch.get_public_key()).unwrap(),
-                      patch.clone())}));
-
-    let maybe_patch_pk1 = patch_map.get(&pk1);
-    assert!(maybe_patch_pk1.is_some());
-    let patch_pk1 = maybe_patch_pk1.unwrap();
-    assert!(pk1 == PublicKey::from_bytes(patch_pk1.get_public_key()).unwrap());
-    assert!(0 == patch_pk1.get_before().get_tokens());
-    assert!(0 == patch_pk1.get_before().get_op_index());
-    assert!(5101 == patch_pk1.get_after().get_tokens());
-    assert!(0 == patch_pk1.get_after().get_op_index());
-
-    let maybe_patch_pk2 = patch_map.get(&pk2);
-    assert!(maybe_patch_pk2.is_some());
-    let patch_pk2 = maybe_patch_pk2.unwrap();
-    assert!(pk2 == PublicKey::from_bytes(patch_pk2.get_public_key()).unwrap());
-    assert!(0 == patch_pk2.get_before().get_tokens());
-    assert!(0 == patch_pk2.get_before().get_op_index());
-    assert!(271 == patch_pk2.get_after().get_tokens());
-    assert!(0 == patch_pk2.get_after().get_op_index());
-}
-
 struct TestLedgerOneAddress {
     address: PublicKey,
     balance: Balance
@@ -381,7 +283,7 @@ fn test_ledger_snapshot_make_patches() {
     let mut balance_pk1 = Balance::new();
     balance_pk1.set_tokens(1000);
     balance_pk1.set_op_index(7);
-    let mut ledger_cell = RefCell::new(HashMap::new());
+    let ledger_cell = RefCell::new(HashMap::new());
     ledger_cell.borrow_mut().insert(pk1.clone(), balance_pk1.clone());
     let mut ledger = TestLedgerHashMap { ledger: ledger_cell };
 
