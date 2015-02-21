@@ -63,9 +63,9 @@ message BalancePatch {
     optional Balance after = 3;
 }
 
-message BlockPatch {
-    optional bytes previous = 1;
-    repeated BalancePatch patches = 2;
+message BlockWithDiff {
+    optional HashedBlock hashed_block = 1;
+    repeated BalancePatch diff = 2;
 }
 
 /*****  Wallet Messages  *****/
@@ -90,8 +90,11 @@ message RpcRequest {
     }
     optional Method method = 1;
 
-    optional PublishTransactionRequest pub_transaction = 2;
     optional PublishBlockRequest pub_block = 3;
+    // optional GetHeadRequest get_head = 4;
+    // optional GetBlocktreeRequest get_blocktree = 5;
+    // optional PublishHeadRequest pub_head = 6;
+    optional PublishTransactionRequest pub_transaction = 2;
 }
 
 message RpcResponse {

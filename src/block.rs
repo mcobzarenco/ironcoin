@@ -1,10 +1,13 @@
+use std::collections::hash_map::{self, HashMap};
+
 use rustc_serialize::base64::{self, ToBase64};
 use time::now_utc;
 
 use crypto::{HashDigest, PublicKey, SecretKey, gen_keypair, hash, hash_message,
              sign_message};
 use error::{SimplesError, SimplesResult};
-use simples_pb::{Block, BlockPatch, HashedBlock, SignedBlock, Transaction};
+use simples_pb::{Balance, BalancePatch, Block, BlockWithDiff, HashedBlock,
+                 SignedBlock, Transaction};
 use tx::{TransactionBuilder, TransactionExt};
 
 fn create_genesis_block(tx: Transaction) -> SimplesResult<HashedBlock> {
@@ -17,6 +20,7 @@ fn create_genesis_block(tx: Transaction) -> SimplesResult<HashedBlock> {
     genesis.mut_signed_block().mut_block().mut_transactions().push(tx);
     genesis.mut_signed_block().mut_block().set_previous(
         HashDigest::from_u64(0).0.to_vec());
+    genesis.mut_signed_block().mut_block().set_height(0);
     genesis.mut_signed_block().mut_block().set_timestamp(
         now_utc().to_timespec().sec);
     genesis.compute_hash();
@@ -58,6 +62,7 @@ pub trait HashedBlockExt {
     fn decode_hash(&self) -> SimplesResult<HashDigest>;
     fn decode_previous(&self) -> SimplesResult<HashDigest>;
     fn get_block<'a>(&'a self) -> &'a Block;
+    fn get_height(&self) -> u32;
     fn set_previous_block(&mut self, block_hash: &HashDigest);
     fn verify_hash(&self) -> SimplesResult<()>;
     fn verify(&self) -> SimplesResult<()>;
@@ -81,6 +86,8 @@ impl HashedBlockExt for HashedBlock {
     fn get_block<'a>(&'a self) -> &'a Block {
         self.get_signed_block().get_block()
     }
+
+    fn get_height(&self) -> u32 { self.get_block().get_height() }
 
     fn set_previous_block(&mut self, block_hash: &HashDigest) {
         self.mut_signed_block().mut_block().set_previous(block_hash.0.to_vec())
@@ -123,26 +130,34 @@ impl SignedBlockExt for SignedBlock {
     }
 }
 
-pub trait BlockPatchExt {
+pub trait BlockWithDiffExt {
+    fn decode_hash(&self) -> SimplesResult<HashDigest>;
     fn decode_previous(&self) -> SimplesResult<HashDigest>;
-    fn encode_previous(&mut self, previous: &HashDigest);
+    fn get_height(&self) -> u32;
 }
 
-impl BlockPatchExt for BlockPatch {
+impl BlockWithDiffExt for BlockWithDiff {
+    fn decode_hash(&self) -> SimplesResult<HashDigest> {
+        self.get_hashed_block().decode_hash()
+    }
+
     fn decode_previous(&self) -> SimplesResult<HashDigest> {
-        HashDigest::from_bytes(self.get_previous())
+        self.get_hashed_block().decode_previous()
     }
 
-    fn encode_previous(&mut self, previous: &HashDigest) {
-        self.set_previous(previous.0.to_vec());
+    fn get_height(&self) -> u32 {
+        self.get_hashed_block().get_height()
     }
 }
+
+/*****  Tests  *****/
 
 #[test]
 fn test_create_genesis_empty() {
     let tx = Transaction::new();
     let maybe_genesis = create_genesis_block(tx);
     assert!(maybe_genesis.is_ok());
+    assert!(0 == maybe_genesis.unwrap().get_block().get_height());
 }
 
 #[test]

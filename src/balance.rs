@@ -69,7 +69,12 @@ impl<'a, L: 'a + LedgerReader> LedgerSnapshot<'a, L> {
         }
     }
 
-    pub fn clear(&mut self) { self.cache.borrow_mut().clear(); }
+    pub fn commit(&mut self) {
+        for (_, patch) in self.cache.borrow_mut().iter_mut() {
+            let after = patch.get_after().clone();
+            patch.set_before(after);
+        }
+    }
 
     pub fn add_transfer(&mut self, transfer: &Transfer) ->
         SimplesResult<()>
@@ -132,7 +137,9 @@ impl<'a, L: 'a + LedgerReader> LedgerSnapshot<'a, L> {
     pub fn make_patches(&self) -> Vec<BalancePatch> {
         let mut block_patch = Vec::<BalancePatch>::new();
         for patch in self.cache.borrow().values() {
-            block_patch.push(patch.clone());
+            if patch.get_before() != patch.get_after() {
+                block_patch.push(patch.clone());
+            }
         }
         block_patch
     }

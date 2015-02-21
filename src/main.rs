@@ -134,7 +134,7 @@ fn create_genesis_block_from_cmdline(tx_strs: &[String])
     Ok(builder.build())
 }
 
-fn create_block_store(block_db: &str, genesis: Option<&HashedBlock>) ->
+fn create_block_store(block_db: &str, genesis: Option<HashedBlock>) ->
     SimplesResult<BlockTreeStore<RocksStore>> {
     BlockTreeStore::new(try!(RocksStore::new(block_db)), genesis)
 }
@@ -321,7 +321,7 @@ used multiple times to specify genesis transactions.", "ADDR:AMOUNT");
             None => None
         };
         let blocktree;
-        match create_block_store(&blocktree_path[], genesis_block.as_ref()) {
+        match create_block_store(&blocktree_path[], genesis_block) {
             Ok(inner_blocktree) => { blocktree = inner_blocktree; },
             Err(err) => {
                 println!("FATAL: Could not instantiate a blocktree from {}.\n{}",

@@ -1,3 +1,5 @@
+use std::iter::FromIterator;
+
 use protobuf::Message;
 use time::now_utc;
 use uuid::Uuid;
@@ -5,7 +7,7 @@ use uuid::Uuid;
 use block::HashedBlockExt;
 use blocktree::BlockTreeStore;
 use crypto::HashDigest;
-use error::SimplesResult;
+use error::{SimplesError, SimplesResult};
 use nanomsg::{Endpoint, Protocol, Socket};
 use simples_pb::{self, HashedBlock,
                  PublishTransactionRequest, PublishTransactionResponse,
@@ -43,38 +45,41 @@ impl StakerService for SimplesService {
     fn on_successful_stake(&mut self, template: BlockTemplate)
                            -> SimplesResult<()>
     {
-        let prev_head_hash = try!(self.blocktree.get_head_hash());
-        if template.previous_block != prev_head_hash {
-            println!("Ignoring block staked with prev: {} != head: {}.",
-                     template.previous_block, prev_head_hash);
-            return Ok(())
+        println!("Successfuly staked a new block!");
+        let head_hash = try!(self.blocktree.get_head_hash());
+        let previous_block = try!(try!(self.blocktree.get_block(
+            &template.previous_block)).ok_or(SimplesError::new(&format!(
+                "previous for staked block {} is missing from kv-store",
+                template.previous_block))));
+        if template.previous_block != head_hash {
+            println!("WARNING: Staked block has previous {} != head: {}.",
+                     template.previous_block, head_hash);
         }
-        let mut hashed_block = HashedBlock::new();
+        let mut staked_block = HashedBlock::new();
+        let block_height = previous_block.get_block().get_height() + 1;
+        let num_tx = self.pending_transactions.len();
         {
-            let mut block = hashed_block.mut_signed_block().mut_block();
+            let mut block = staked_block.mut_signed_block().mut_block();
+            // block.set_staker_pk(template.staker_pk.to_vec());
+            block.set_previous(template.previous_block.0.to_vec());
             block.set_timestamp(template.timestamp);
-            block.set_previous(prev_head_hash.0.to_vec());
+            block.set_height(block_height);
+            block.set_target_hash(template.proof_hash.0.to_vec());
+
+            block.set_transactions(
+                FromIterator::from_iter(self.pending_transactions.drain()));
         }
-        let head_hash = hashed_block.compute_hash();
-        try!(self.blocktree.insert_block(&hashed_block));
-        try!(self.blocktree.set_head(&head_hash));
-        {
-            let mut cache = self.blocktree.tx_cache();
-            for tx in self.pending_transactions.iter() {
-                let apply_result = cache.apply_transaction(tx);
-                assert!(apply_result.is_ok());
-            }
-            // try!(cache.flush());
-        }
-        // try!(self.staker_head.as_mut().unwrap().set_head_block(
-        //     head_hash.clone(), prev_head_hash.clone(), now_utc().to_timespec().sec));
-        try!(self.publish_block(hashed_block.clone()));
+        let staked_hash = staked_block.compute_hash();
+        try!(self.blocktree.insert_block(staked_block.clone()));
+        try!(self.blocktree.set_head(&staked_hash));
+        try!(self.publish_block(staked_block.clone()));
+
         println!("\n============");
-        println!("Sucessful stake ({} tx) now={} head_time={}:\nnew head: {}\nprev_head: {}",
-                 self.pending_transactions.len(), now_utc().to_timespec().sec,
-                 template.timestamp, head_hash, prev_head_hash);
+        println!(
+            "Sucessful stake ({} tx) now={} head_time={} height={}:\nnew head: {}\nprev_head: {}",
+            num_tx, now_utc().to_timespec().sec, template.timestamp, block_height,
+            staked_hash, template.previous_block);
         println!("============\n");
-        self.pending_transactions.clear();
 
         // for peer in range(0, self.peers.len()) {
         //     let mut request = PublishBlockRequest::new();
@@ -139,9 +144,9 @@ impl RpcService for SimplesService {
         if maybe_prev_head.unwrap() == try!(self.blocktree.get_head_hash()) {
             println!("Block comes after head. Trying to fast-forward.");
             {
-                let mut cache = self.blocktree.tx_cache();
+                let mut snapshot = self.blocktree.snapshot();
                 for tx in self.pending_transactions.iter() {
-                    let apply_result = cache.apply_transaction(tx);
+                    let apply_result = snapshot.apply_transaction(tx);
                     if apply_result.is_err() {
                         println!("Block contains invalid tx. Ignoring");
                         response.set_status(ResponseStatus::INVALID_BLOCK);
@@ -152,7 +157,7 @@ impl RpcService for SimplesService {
             }
             // try!(self.blocktree.set_head(hashed_block.clone()));
             // try!(self.blocktree.set_head(hashed_block.));
-            self.publish_block(hashed_block.clone());
+            try!(self.publish_block(hashed_block.clone()));
         }
         response.set_status(ResponseStatus::OK);
         Ok(response)
@@ -175,13 +180,13 @@ impl RpcService for SimplesService {
             return Ok(response);
         }
 
-        let mut cache = self.blocktree.tx_cache();
+        let mut snapshot = self.blocktree.snapshot();
         for tx in self.pending_transactions.iter() {
-            let apply_result = cache.apply_transaction(tx);
+            let apply_result = snapshot.apply_transaction(tx);
             assert!(apply_result.is_ok());
         }
 
-        let applied = cache.apply_transaction(&transaction);
+        let applied = snapshot.apply_transaction(&transaction);
         if applied.is_err() {
             println!("{:?}", applied);
             response.set_status(ResponseStatus::INVALID_REQUEST);
