@@ -1,6 +1,6 @@
 extern crate rocksdb;
 
-use std::collections::hash_map::{self, HashMap};
+use std::collections::hash_map::HashMap;
 use std::error::{FromError};
 use std::ops::Deref;
 use std::vec;
@@ -8,7 +8,7 @@ use std::vec;
 use protobuf::{self, MessageStatic};
 use self::rocksdb::{RocksDB, RocksDBResult};
 
-use error::{SimplesError, SimplesResult};
+use error::SimplesResult;
 
 pub trait KeyValueStore {
     fn get_bytes(&self, key: &[u8]) -> SimplesResult<Option<Vec<u8>>>;
@@ -80,7 +80,7 @@ impl<Store: KeyValueStore> ProtobufStore for MessageStore<Store> {
     fn get_message<Message: MessageStatic>
         (&self, key: &[u8]) -> SimplesResult<Option<Message>> {
         Ok(match try!(self.kv_store.get_bytes(key)) {
-            Some(bytes) => Some(try!(protobuf::parse_from_bytes(&bytes[]))),
+            Some(bytes) => Some(try!(protobuf::parse_from_bytes(&bytes))),
             None => None
         })
     }
@@ -88,7 +88,7 @@ impl<Store: KeyValueStore> ProtobufStore for MessageStore<Store> {
     fn set_message<Message: MessageStatic>
         (&mut self, key: &[u8], message: &Message) -> SimplesResult<()>
     {
-        let msg_bytes = &try!(message.write_to_bytes())[];
+        let msg_bytes = &try!(message.write_to_bytes());
         Ok(try!(self.kv_store.set_bytes(key, msg_bytes)))
     }
 }

@@ -4,8 +4,8 @@ use protobuf::RepeatedField;
 
 use balance::{BalancePatchExt, LedgerReader, LedgerWriter, LedgerSnapshot,
               Patchable};
-use block::{GenesisBuilder, BlockWithDiffExt, HashedBlockExt};
-use crypto::{gen_keypair, HashDigest, PublicKey};
+use block::{BlockWithDiffExt, HashedBlockExt};
+use crypto::{HashDigest, PublicKey};
 use error::{SimplesError, SimplesResult};
 use simples_pb::{Balance, BalancePatch, BlockWithDiff, HashedBlock};
 use store::{MessageStore, KeyValueStore, ProtobufStore};
@@ -81,7 +81,7 @@ impl<Store: KeyValueStore> BlockTreeStore<Store> {
         let mut blocktree;
         let maybe_genesis_hash =
             match try!(store.get_bytes(GENESIS_FIELD.as_bytes())) {
-                Some(hash_raw) => Some(try!(HashDigest::from_bytes(&hash_raw[]))),
+                Some(hash_raw) => Some(try!(HashDigest::from_bytes(&hash_raw))),
                 None => None
             };
         match (maybe_genesis_hash, new_genesis) {
@@ -90,7 +90,7 @@ impl<Store: KeyValueStore> BlockTreeStore<Store> {
                 if new_genesis_hash != genesis_hash {
                     return Err(SimplesError::new(&format!(
                         "Blocktree already has genesis {} != {} (requested)",
-                        genesis_hash, new_genesis_hash)[]));
+                        genesis_hash, new_genesis_hash)));
                 }
                 println!("Blocktree already has genesis {}.", genesis_hash);
                 blocktree = BlockTreeStore { store: store }
@@ -106,9 +106,9 @@ impl<Store: KeyValueStore> BlockTreeStore<Store> {
                 let genesis = try!(make_genesis_block_diff(new_genesis_block));
                 let genesis_key = format_block_key(&new_genesis_hash);
                 try!(store.set_bytes(
-                    GENESIS_FIELD.as_bytes(), &new_genesis_hash.0[]));
+                    GENESIS_FIELD.as_bytes(), &new_genesis_hash.0));
                 try!(store.set_bytes(
-                    HEAD_FIELD.as_bytes(), &new_genesis_hash.0[]));
+                    HEAD_FIELD.as_bytes(), &new_genesis_hash.0));
                 try!(store.set_message(genesis_key.as_bytes(), &genesis));
                 blocktree = BlockTreeStore { store: store };
                 for patch in genesis.get_diff().iter() {
@@ -131,20 +131,23 @@ impl<Store: KeyValueStore> BlockTreeStore<Store> {
     pub fn get_head_hash(&self) -> SimplesResult<HashDigest> {
         let head_hash_raw = try!(self.store.get_bytes(HEAD_FIELD.as_bytes()))
             .expect("FATAL: Corrupted blocktree, store is headless.");
-        let maybe_head_hash = HashDigest::from_bytes(&head_hash_raw[]);
+        let maybe_head_hash = HashDigest::from_bytes(&head_hash_raw);
         assert!(maybe_head_hash.is_ok(),
                 "FATAL: Corrupted blocktree, head block has invalid hash.");
         Ok(maybe_head_hash.unwrap())
     }
 
     pub fn set_head(&mut self, new_head_hash: &HashDigest) -> SimplesResult<()> {
-        let new_head = try!(try!(self.get_block(new_head_hash)).ok_or(
+        if *new_head_hash == try!(self.get_head_hash()) {
+            return Ok(());
+        }
+        try!(try!(self.get_block(new_head_hash)).ok_or(
             SimplesError::new(&format!(
                 "Tried to set head to {}, but it doesn't exist in the blocktree",
-                new_head_hash)[])));
+                new_head_hash))));
         let mut patches = try!(self.snapshot_at(new_head_hash)).make_patches();
         for patch in patches.drain() { try!(self.apply_patch(patch)); }
-        self.store.set_bytes(HEAD_FIELD.as_bytes(), &new_head_hash.0[])
+        self.store.set_bytes(HEAD_FIELD.as_bytes(), &new_head_hash.0)
     }
 
     pub fn get_genesis(&self) -> SimplesResult<HashedBlock> {
@@ -159,7 +162,7 @@ impl<Store: KeyValueStore> BlockTreeStore<Store> {
         let genesis_hash_raw =
             try!(self.store.get_bytes(GENESIS_FIELD.as_bytes())).expect(
                 "FATAL: Corrupted blocktree, genesis hash key: {} is not set.");
-        let maybe_genesis_hash = HashDigest::from_bytes(&genesis_hash_raw[]);
+        let maybe_genesis_hash = HashDigest::from_bytes(&genesis_hash_raw);
         assert!(maybe_genesis_hash.is_ok(),
                 "FATAL: Corrupted blocktree, genesis block has invalid hash.");
         Ok(maybe_genesis_hash.unwrap())
@@ -172,7 +175,6 @@ impl<Store: KeyValueStore> BlockTreeStore<Store> {
 
     pub fn insert_block(&mut self, block: HashedBlock) -> SimplesResult<()> {
         try!(block.verify());
-        let block_hash = try!(block.decode_hash());
         let block_height = block.get_block().get_height();
         let previous_hash = try!(block.decode_previous());
         let previous_block =
@@ -194,7 +196,6 @@ impl<Store: KeyValueStore> BlockTreeStore<Store> {
             block_diff.set_diff(RepeatedField::from_vec(snapshot.make_patches()));
         }
         block_diff.set_hashed_block(block);
-        let block_key = format_block_key(&block_hash);
         Ok(try!(self.set_block_diff(&block_diff)))
     }
 
@@ -209,7 +210,7 @@ impl<Store: KeyValueStore> BlockTreeStore<Store> {
             let mut target_ancestor =
                 try!(try!(self.get_block_diff(&block_hash))
                      .ok_or(SimplesError::new(&format!("snapshot_at error: patch \
-                            missing from kv-store for block {}", block_hash)[])));
+                            missing from kv-store for block {}", block_hash))));
             let mut head_ancestor =
                 try!(self.get_block_diff(&try!(self.get_head_hash()))).unwrap();
             let mut target_ancestor_hash = target_ancestor.decode_hash().unwrap();
@@ -233,7 +234,7 @@ impl<Store: KeyValueStore> BlockTreeStore<Store> {
                     target_ancestor =
                         try!(self.get_block_diff(&target_ancestor_hash))
                          .expect(&format!("FATAL: Corrupted blocktree, missing \
-                          block from target history: {}", target_ancestor_hash)[]);
+                          block from target history: {}", target_ancestor_hash));
                 }
             }
         }
@@ -384,9 +385,9 @@ fn test_blocktree_sets_head_and_genesis() {
     assert!(maybe_head_hash.is_some());
 
     let genesis_hash =
-        HashDigest::from_bytes(&maybe_genesis_hash.unwrap()[]).unwrap();
+        HashDigest::from_bytes(&maybe_genesis_hash.unwrap()).unwrap();
     let head_hash =
-        HashDigest::from_bytes(&maybe_head_hash.unwrap()[]).unwrap();
+        HashDigest::from_bytes(&maybe_head_hash.unwrap()).unwrap();
     assert!(genesis.decode_hash().unwrap() == genesis_hash);
     assert!(genesis_hash == head_hash);
     assert!(blocktree.get_genesis_hash().unwrap() == genesis_hash);

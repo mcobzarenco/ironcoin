@@ -1,5 +1,7 @@
+use std::fs::File;
+use std::io::{Read, Write};
 use std::iter::count;
-use std::old_io::{File};
+use std::path::Path;
 
 use protobuf;
 use rustc_serialize::base64::{self, ToBase64};
@@ -12,17 +14,18 @@ use simples_pb::{Wallet, WalletKey};
 pub fn load_proto_from_file<Message: protobuf::MessageStatic>(
     path: &str) -> SimplesResult<Message>
 {
-    let mut proto_in = File::open(&Path::new(path));
-    let wallet_bytes = try!(proto_in.read_to_end());
-    Ok(try!(protobuf::parse_from_bytes(&wallet_bytes[])))
+    let mut proto_in = try!(File::open(&Path::new(path)));
+    let mut wallet_bytes = vec![];
+    try!(proto_in.read_to_end(&mut wallet_bytes));
+    Ok(try!(protobuf::parse_from_bytes(&wallet_bytes)))
 }
 
 pub fn save_proto_to_file<Message: protobuf::MessageStatic>(
     path: &str, msg: &Message) -> SimplesResult<()>
 {
-    let mut proto_out = File::create(&Path::new(path));
+    let mut proto_out = try!(File::create(&Path::new(path)));
     let wallet_bytes = try!(msg.write_to_bytes());
-    Ok(try!(proto_out.write_all(&wallet_bytes[])))
+    Ok(try!(proto_out.write_all(&wallet_bytes)))
 }
 
 pub fn load_from_file(path: &str) -> SimplesResult<Wallet> {
@@ -38,13 +41,13 @@ pub fn pretty_format(wallet_key: &WalletKey) -> String {
     let pk = wallet_key.get_public_key();
     let sk = wallet_key.get_secret_key();
     formatted.push_str(&format!(
-        "[ {} ]\n", pk.to_base64(base64::STANDARD))[]);
+        "[ {} ]\n", pk.to_base64(base64::STANDARD)));
     formatted.push_str(&format!(
-        " name: {}\n", wallet_key.get_name())[]);
+        " name: {}\n", wallet_key.get_name()));
     formatted.push_str(&format!(
-        "   pk: {}\n", pk.to_base64(base64::STANDARD))[]);
+        "   pk: {}\n", pk.to_base64(base64::STANDARD)));
     formatted.push_str(&format!(
-        "   sk: {}\n", sk.to_base64(base64::STANDARD))[]);
+        "   sk: {}\n", sk.to_base64(base64::STANDARD)));
     formatted
 }
 
@@ -103,7 +106,7 @@ impl WalletExt for Wallet {
     fn search_keys(&self, search_str: &str) -> Vec<&WalletKey> {
         self.get_keys().iter()
             .filter(|wkey| {
-                let name = &wkey.get_name()[];
+                let name = &wkey.get_name()[..];
                 let pk_base64 = wkey.get_public_key()
                     .to_base64(base64::STANDARD);
                 name.starts_with(search_str) ||

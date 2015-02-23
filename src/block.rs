@@ -1,13 +1,9 @@
-use std::collections::hash_map::{self, HashMap};
-
-use rustc_serialize::base64::{self, ToBase64};
 use time::now_utc;
 
-use crypto::{HashDigest, PublicKey, SecretKey, gen_keypair, hash, hash_message,
+use crypto::{HashDigest, PublicKey, SecretKey, gen_keypair, hash_message,
              sign_message};
 use error::{SimplesError, SimplesResult};
-use simples_pb::{Balance, BalancePatch, Block, BlockWithDiff, HashedBlock,
-                 SignedBlock, Transaction};
+use simples_pb::{Block, BlockWithDiff, HashedBlock, SignedBlock, Transaction};
 use tx::{TransactionBuilder, TransactionExt};
 
 fn create_genesis_block(tx: Transaction) -> SimplesResult<HashedBlock> {
@@ -94,14 +90,14 @@ impl HashedBlockExt for HashedBlock {
     }
 
     fn verify_hash(&self) -> SimplesResult<()> {
-        let block_hash = try!(HashDigest::from_bytes(&self.get_hash()[]));
+        let block_hash = try!(HashDigest::from_bytes(&self.get_hash()));
         try!(HashDigest::from_bytes(self.get_block().get_previous()));
 
         let computed_hash = hash_message(self.get_signed_block());
         if computed_hash == block_hash { Ok(()) }
         else { Err(SimplesError::new(&format!(
             "Block has invalid hash: {} != {} (actual)",
-            block_hash, computed_hash)[]))
+            block_hash, computed_hash)))
         }
     }
 
@@ -208,5 +204,5 @@ fn test_hashed_block_hash_integrity() {
 //     hashed_block.compute_hash();
 //     assert!(hashed_block.verify_hash().is_ok());
 //     println!("Block hash: {}",
-//             &hashed_block.get_hash()[].to_base64(base64::STANDARD));
+//             &hashed_block.get_hash().to_base64(base64::STANDARD));
 // }

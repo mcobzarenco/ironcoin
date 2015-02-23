@@ -20,12 +20,12 @@ impl SimplesError {
 
 impl Display for SimplesError {
     fn fmt(&self, formatter: &mut Formatter) -> Result<(), fmt::Error> {
-        formatter.write_str(&self.description[])
+        formatter.write_str(&self.description)
     }
 }
 
 impl Error for SimplesError {
-    fn description(&self) -> &str { &self.description[] }
+    fn description(&self) -> &str { &self.description }
 
     fn cause(&self) -> Option<&Error> { None }
 }
@@ -43,7 +43,7 @@ impl Error for SimplesError {
 
 trait ConvertToSimplesError: Error {}
 impl ConvertToSimplesError for protobuf::error::ProtobufError {}
-impl ConvertToSimplesError for ::std::old_io::IoError {}
+impl ConvertToSimplesError for ::std::io::Error {}
 impl ConvertToSimplesError for rustc_serialize::json::EncoderError {}
 impl ConvertToSimplesError for rustc_serialize::base64::FromBase64Error {}
 

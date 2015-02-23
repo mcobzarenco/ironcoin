@@ -1,13 +1,10 @@
 use std::cmp::max;
-use std::mem::transmute;
 
-use rustc_serialize::base64::{self, ToBase64};
 use time::now_utc;
 
 use crypto::{hash, HashDigest, PublicKey, slice_to_pk};
-use error::SimplesResult;
 use simples_pb::Wallet;
-use wallet::{self, WalletExt};
+use wallet;
 
 #[derive(Clone, Eq, PartialEq, Debug)]
 pub struct BlockTemplate {
@@ -16,14 +13,13 @@ pub struct BlockTemplate {
     pub timestamp: i64,
 }
 
-pub const STAKING_INTERVAL: i64 = 3;
-const U64_BYTES: usize = 8;
+pub const STAKING_INTERVAL: i64 = 1;
 
 pub fn compute_proof_hash(
     head_block: &HashDigest, public_key: &PublicKey) -> HashDigest {
     let mut proof_bytes = head_block.0.to_vec();
-    proof_bytes.push_all(&public_key.0[]);
-    hash(&proof_bytes[])
+    proof_bytes.push_all(&public_key.0);
+    hash(&proof_bytes)
 }
 
 pub struct Staker {
@@ -38,7 +34,7 @@ impl Staker {
     pub fn new(staking_keys: Wallet, head_block: HashDigest,
                head_timestamp: i64) -> Staker {
         let mut step = HashDigest::from_u64(0);
-        step.0[step.0.len() - 1] = 1;
+        step.0[step.0.len() - 1] = 3;
         Staker {
             head_block: head_block,
             target_hash: HashDigest::from_u64(0),
@@ -61,18 +57,18 @@ impl Staker {
         let proof_hashes: Vec<HashDigest> =
                 self.staking_keys.get_keys().iter().map(|wkey| {
                 let p = compute_proof_hash(
-                    &self.head_block, &slice_to_pk(&wkey.get_public_key()[]).unwrap());
-                println!("pk: {}\nproof_hash: {}",
-                         &wkey.get_public_key()[].to_base64(base64::STANDARD), p);
+                    &self.head_block, &slice_to_pk(&wkey.get_public_key()).unwrap());
+                // println!("pk: {}\nproof_hash: {}",
+                //          &wkey.get_public_key().to_base64(base64::STANDARD), p);
                 p
             }).collect();
-        println!("untried={}, max_timestmap={}", self.untried_timestamp, max_timestamp);
+        // println!("untried={}, max_timestmap={}", self.untried_timestamp, max_timestamp);
         for timestamp in interval {
             let mut wallet_index = 0;
-            println!("target at timestep {} is {}", timestamp, self.target_hash);
+            // println!("target at timestep {} is {}", timestamp, self.target_hash);
             for proof_hash in proof_hashes.iter() {
                 if *proof_hash < self.target_hash {
-                    println!("Hoo-yeah! Successfuly staked a block with {}",
+                    println!("Hoo-yeah! Successfuly staked a block with address {}",
                              wallet::pretty_format(
                                  &self.staking_keys.get_keys()[wallet_index]));
                     return Some(BlockTemplate {

@@ -49,7 +49,7 @@ impl<LedgerMutator: LedgerReader + LedgerWriter>
                 "Actual initial balance ({}, {}) != ({}, {}) from the patch.",
                 before_balance.get_tokens(), before_balance.get_op_index(),
                 patch.get_before().get_tokens(),
-                patch.get_before().get_op_index())[]));
+                patch.get_before().get_op_index())));
         }
         try!(self.set_balance(&public_key, patch.get_after().clone()));
         Ok(())
@@ -108,14 +108,15 @@ impl<'a, L: 'a + LedgerReader> LedgerSnapshot<'a, L> {
                 Ok(())
             } else {
                 Err(SimplesError::new(&format!(
-                    "Wrong op number for source address {}: op_index was
-{} != {} (required)", source_pk, transfer.get_op_index(), source.get_op_index())[]))
+                    "Wrong op number for source address {}: op_index was \
+                     {} != {} (required)", source_pk, transfer.get_op_index(),
+                    source.get_op_index())))
             }
         } else {
             Err(SimplesError::new(&format!(
-                "ERROR: Not enough funds. Source address balance is {} but
-{} tokens were transferred: {} -> {}", source.get_tokens(), transfer.get_tokens(),
-                source_pk, destination_pk)[]))
+                "Not enough funds. Source address balance is {} but \
+                 {} tokens were transferred: {} -> {}", source.get_tokens(),
+                transfer.get_tokens(), source_pk, destination_pk)))
         }
     }
 
