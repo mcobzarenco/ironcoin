@@ -151,7 +151,7 @@ used multiple times to specify genesis transactions.", "ADDR:AMOUNT");
                     .map(|wkey| { println!("{}", wallet::pretty_format(*wkey)); })
                     .collect();
             } else {
-                let _: Vec<()> = wallet.get_keys().iter().map(
+                let _: Vec<()> = wallet.get_keypairs().iter().map(
                     |wkey| println!("{}", wallet::pretty_format(wkey))).collect();
             }
         }
@@ -207,7 +207,6 @@ used multiple times to specify genesis transactions.", "ADDR:AMOUNT");
                 .set_bounty(&source_sk, &source_pk, 1);
         }
         let transaction = tx_builder.build().unwrap();
-        println!("{}", protobuf::text_format::print_to_string(&transaction));
         if peers.len() == 0 {
             println!("ERROR: No peers were specified.");
             return;
