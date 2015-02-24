@@ -287,6 +287,9 @@ impl<Store: KeyValueStore> LedgerWriter for BlockTreeStore<Store> {
 
 /*****  Tests  *****/
 
+use block::GenesisBuilder;
+use crypto::gen_keypair;
+
 #[test]
 fn test_make_genesis_block_diff_empty() {
     use block::GenesisBuilder;
