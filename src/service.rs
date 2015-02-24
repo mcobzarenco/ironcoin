@@ -1,4 +1,5 @@
 use std::cmp::min;
+use std::error::Error;
 use std::io::{Read, Write};
 use std::iter::FromIterator;
 
@@ -6,7 +7,7 @@ use protobuf::{self, Message, RepeatedField};
 use time::now_utc;
 use uuid::Uuid;
 
-use block::HashedBlockExt;
+use block::{HashedBlockExt, SignedBlockExt};
 use blocktree::BlockTreeStore;
 use crypto::HashDigest;
 use error::{SimplesError, SimplesResult};
@@ -87,9 +88,8 @@ pub struct SimplesService {
 
 impl SimplesService {
     pub fn new(blocktree: BlockTreeStore<RocksStore>)
-               -> SimplesResult<SimplesService>
-    {
-        println!("Head block: {:?}", blocktree.get_head_hash());
+               -> SimplesResult<SimplesService> {
+        println!("Head block: {}", blocktree.get_head_hash().unwrap());
 
         let pub_endpoint_str = format!("inproc://{}", Uuid::new_v4().to_string());
         let mut pub_socket = try!(Socket::new(Protocol::Pub));
@@ -118,8 +118,23 @@ impl SimplesService {
     }
 
     fn set_head(&mut self, head: &HashedBlock) -> SimplesResult<()> {
-        try!(self.blocktree.set_head(&try!(head.decode_hash())));
+        let head_hash = try!(head.decode_hash());
+        let previous_hash = try!(head.decode_previous());
+        try!(self.blocktree.set_head(&head_hash));
         self.prune_invalid_transactions();
+        println!("======  New head block  ======
+   Height: {}
+     Head: {}
+ Previous: {}
+Staker PK: {}
+Timestamp: {}
+    Proof: {}
+      #tx: {}",
+                 head.get_height(), head_hash, previous_hash,
+                 try!(head.decode_staker_pk()),
+                 head.get_block().get_timestamp(),
+                 try!(head.decode_proof()),
+                 head.get_block().get_transactions().len());
         self.publish_new_head(head)
     }
 }
@@ -128,7 +143,6 @@ impl StakerService for SimplesService {
     fn on_successful_stake(&mut self, template: BlockTemplate)
                            -> SimplesResult<()>
     {
-        println!("Successfuly staked a new block!");
         let head_hash = try!(self.blocktree.get_head_hash());
         let previous_block = try!(try!(self.blocktree.get_block(
             &template.previous_block)).ok_or(SimplesError::new(&format!(
@@ -143,25 +157,27 @@ impl StakerService for SimplesService {
         let num_tx = self.pending_transactions.len();
         {
             let mut block = staked_block.mut_signed_block().mut_block();
-            // block.set_staker_pk(template.staker_pk.to_vec());
+            block.set_staker_pk(template.staker_pk.0.to_vec());
             block.set_previous(template.previous_block.0.to_vec());
             block.set_timestamp(template.timestamp);
             block.set_height(block_height);
             block.set_target_hash(template.proof_hash.0.to_vec());
 
+            self.prune_invalid_transactions();
             block.set_transactions(
                 FromIterator::from_iter(self.pending_transactions.drain()));
         }
+        staked_block.mut_signed_block().sign(&template.staker_sk);
         let staked_hash = staked_block.compute_hash();
         try!(self.blocktree.insert_block(staked_block.clone()));
         try!(self.set_head(&staked_block));
 
-        println!("\n============");
-        println!("Sucessful stake ({} tx) now={} head_time={} height={}:\n\
-                  new head: {}\nprev_head: {}",num_tx, now_utc().to_timespec().sec,
-                 template.timestamp, block_height, staked_hash,
-                 template.previous_block);
-        println!("============\n");
+        // println!("\n============");
+        // println!("Sucessful stake ({} tx) now={} head_time={} height={}:\n\
+        //           new head: {}\nprev_head: {}",num_tx, now_utc().to_timespec().sec,
+        //          template.timestamp, block_height, staked_hash,
+        //          template.previous_block);
+        // println!("============\n");
 
         Ok(())
     }
@@ -211,7 +227,6 @@ impl RpcService for SimplesService {
         SimplesResult<GetBlocktreeResponse>
     {
         use simples_pb::GetBlocktreeResponse_Status as ResponseStatus;
-        println!("get_blocktree: {:?}", request);
         let mut response = GetBlocktreeResponse::new();
         let mut block_pointer = try!(self.blocktree.get_head());
         response.set_status(ResponseStatus::OK);
@@ -271,24 +286,6 @@ impl RpcService for SimplesService {
             response.set_status(ResponseStatus::INVALID_BLOCK);
             return Ok(response);
         }
-        // if maybe_prev_head.unwrap() == try!(self.blocktree.get_head_hash()) {
-        //     println!("Block comes after head. Trying to fast-forward.");
-        //     {
-        //         let mut snapshot = self.blocktree.snapshot();
-        //         for tx in self.pending_transactions.iter() {
-        //             let apply_result = snapshot.apply_transaction(tx);
-        //             if apply_result.is_err() {
-        //                 println!("Block contains invalid tx. Ignoring");
-        //                 response.set_status(ResponseStatus::INVALID_BLOCK);
-        //                 return Ok(response);
-        //             }
-        //         }
-        //         // try!(cache.flush());
-        //     }
-        //     // try!(self.blocktree.set_head(hashed_block.clone()));
-        //     // try!(self.blocktree.set_head(hashed_block.));
-        //     try!(self.publish_new_head(&hashed_block));
-        // }
         response.set_status(ResponseStatus::OK);
         Ok(response)
     }
@@ -307,9 +304,12 @@ impl RpcService for SimplesService {
         let checked = transaction.verify_signatures();
         if checked.is_err() {
             response.set_status(ResponseStatus::INVALID_REQUEST);
+            response.set_description(
+                String::from_str(checked.unwrap_err().description()));
             return Ok(response);
         }
 
+        self.prune_invalid_transactions();
         let mut snapshot = self.blocktree.snapshot();
         for tx in self.pending_transactions.iter() {
             let apply_result = snapshot.apply_transaction(tx);
@@ -318,8 +318,9 @@ impl RpcService for SimplesService {
 
         let applied = snapshot.apply_transaction(&transaction);
         if applied.is_err() {
-            println!("{:?}", applied);
             response.set_status(ResponseStatus::INVALID_REQUEST);
+            response.set_description(
+                String::from_str(applied.unwrap_err().description()));
             return Ok(response);
         }
         self.pending_transactions.push(transaction);
@@ -333,8 +334,9 @@ impl SyncBlocktree for SimplesService {
                                 -> SimplesResult<Option<RpcRequest>>
     {
         let head = try!(self.blocktree.get_head());
-        println!("Got blocktree update from peer start_height={} \
-                  current head at {}", response.get_start_height(),
+        println!("Got blocktree state from peer with heights={}..{} / \
+                  current head height: {}", response.get_start_height(),
+                 response.get_start_height() + response.get_ancestors().len() as u32,
                  head.get_height());
         if head.get_height() >= response.get_head_height() ||
             response.get_ancestors().len() == 0 {
@@ -353,7 +355,7 @@ impl SyncBlocktree for SimplesService {
             match try!(self.blocktree.get_block(&ancestor_hash)) {
                 Some(_) => {},
                 None => {
-                    println!("missing ancestor: {}", ancestor_hash);
+                    println!("requesting block: {}", ancestor_hash);
                     if oldest_block {
                         if response.get_start_height() == 0 {
                             println!("WARNING: peer uses a different genesis \
@@ -366,7 +368,6 @@ impl SyncBlocktree for SimplesService {
                         } else {
                             new_start_height -= 20;
                         }
-                        println!("unwinding peer history to {}", new_start_height);
                         let mut request = GetBlocktreeRequest::new();
                         request.set_start_height(new_start_height);
                         return Ok(Some(wrap_get_blocktree_request(request)));
@@ -385,14 +386,13 @@ impl SyncBlocktree for SimplesService {
     fn on_received_peer_blocks(&mut self, mut response: GetBlocksResponse)
                                -> SimplesResult<Option<RpcRequest>>
     {
-        println!("Got {} peer blocks.", response.get_blocks().len());
+        println!("Received {} blocks from peer.", response.get_blocks().len());
         let mut new_head = try!(self.blocktree.get_head());
         for block in response.take_blocks().into_iter() {
             if block.get_height() > new_head.get_height() {
                 new_head = block.clone();
             }
-            self.blocktree.insert_block(block).unwrap();
-            // try!(self.blocktree.insert_block(block));
+            try!(self.blocktree.insert_block(block));
         }
         try!(self.blocktree.set_head(&try!(new_head.decode_hash())));
         Ok(None)
