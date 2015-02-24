@@ -61,6 +61,8 @@ pub trait HashedBlockExt {
     fn compute_hash(&mut self) -> HashDigest;
     fn decode_hash(&self) -> SimplesResult<HashDigest>;
     fn decode_previous(&self) -> SimplesResult<HashDigest>;
+    fn decode_proof(&self) -> SimplesResult<HashDigest>;
+    fn decode_staker_pk(&self) -> SimplesResult<PublicKey>;
     fn get_block<'a>(&'a self) -> &'a Block;
     fn get_height(&self) -> u32;
     fn set_previous_block(&mut self, block_hash: &HashDigest);
@@ -80,7 +82,15 @@ impl HashedBlockExt for HashedBlock {
     }
 
     fn decode_previous(&self) -> SimplesResult<HashDigest> {
-        HashDigest::from_bytes(self.get_block().get_previous())
+        self.get_block().decode_previous()
+    }
+
+    fn decode_proof(&self) -> SimplesResult<HashDigest> {
+        self.get_block().decode_previous()
+    }
+
+    fn decode_staker_pk(&self) -> SimplesResult<PublicKey> {
+        self.get_block().decode_staker_pk()
     }
 
     fn get_block<'a>(&'a self) -> &'a Block {
@@ -115,18 +125,40 @@ impl HashedBlockExt for HashedBlock {
 }
 
 pub trait SignedBlockExt {
+    fn decode_signature(&self) -> SimplesResult<Signature>;
     fn sign(&mut self, secret_key: &SecretKey);
     fn verify_signature(&self) -> SimplesResult<()>;
 }
 
 impl SignedBlockExt for SignedBlock {
+    fn decode_signature(&self) -> SimplesResult<Signature> {
+        slice_to_signature(self.get_signature())
+    }
+
     fn sign(&mut self, secret_key: &SecretKey) {
         let signature = sign_message(secret_key, self.get_block());
         self.set_signature(signature.0.to_vec());
     }
 
     fn verify_signature(&self) -> SimplesResult<()> {
-        Ok(())
+        let public_key = try!(self.get_block().decode_staker_pk());
+        let signature = try!(self.decode_signature());
+        verify_signed_message(&public_key, self.get_block(), &signature)
+    }
+}
+
+pub trait BlockExt {
+    fn decode_previous(&self) -> SimplesResult<HashDigest>;
+    fn decode_staker_pk(&self) -> SimplesResult<PublicKey>;
+}
+
+impl BlockExt for Block {
+    fn decode_previous(&self) -> SimplesResult<HashDigest> {
+        HashDigest::from_bytes(self.get_previous())
+    }
+
+    fn decode_staker_pk(&self) -> SimplesResult<PublicKey> {
+        PublicKey::from_bytes(self.get_staker_pk())
     }
 }
 
@@ -152,12 +184,15 @@ impl BlockWithDiffExt for BlockWithDiff {
 
 /*****  Tests  *****/
 
+use crypto::{hash};
+
 #[test]
 fn test_create_genesis_empty() {
+    let (pk, sk) = gen_keypair();
     let tx = Transaction::new();
-    let maybe_genesis = create_genesis_block(tx);
-    assert!(maybe_genesis.is_ok());
-    assert!(0 == maybe_genesis.unwrap().get_block().get_height());
+    let genesis = create_genesis_block(&pk, &sk, tx).unwrap();
+    genesis.verify().unwrap();
+    assert!(0 == genesis.get_block().get_height());
 }
 
 #[test]
@@ -170,9 +205,9 @@ fn test_create_genesis_with_invalid_tx() {
     let maybe_tx = tx_builder.build();
     assert!(maybe_tx.is_ok());
     let mut tx = maybe_tx.unwrap();
-    assert!(create_genesis_block(tx.clone()).is_ok());
+    assert!(create_genesis_block(&pk1, &sk1, tx.clone()).is_ok());
     tx.clear_signatures();
-    assert!(create_genesis_block(tx).is_err());
+    assert!(create_genesis_block(&pk1, &sk1, tx).is_err());
 }
 
 #[test]
