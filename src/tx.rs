@@ -24,9 +24,7 @@ impl TransactionExt for Transaction {
                 Some(sign_bytes) => {
                     let pk = try!(slice_to_pk(transfer.get_source_pk()));
                     let signature = try!(slice_to_signature(&sign_bytes));
-                    if !verify_signature(&pk, commit_bytes, &signature) {
-                        return Err(SimplesError::new("Invalid signature."))
-                    }
+                    try!(verify_signature(&pk, commit_bytes, &signature));
                 },
                 None => return Err(SimplesError::new("Missing key."))
             }
@@ -83,13 +81,14 @@ impl TransactionBuilder {
             let pk_bytes = vec::as_vec(transfer.get_source_pk()).clone();
             let pk = slice_to_pk(&pk_bytes).unwrap();
             match verify_signature(&pk, commit_bytes, &signature) {
-                true => {
+                Ok(_) => {
                     let mut sign = DetachedSignature::new();
                     sign.set_public_key(pk_bytes);
                     sign.set_payload(signature.0.to_vec());
                     transaction.mut_signatures().push(sign);
                 },
-                false => return Err(SimplesError::new("Invalid key for source account."))
+                Err(_) => return Err(
+                    SimplesError::new("Invalid key for source account."))
             }
         }
         transaction.set_commit(self.commit);
