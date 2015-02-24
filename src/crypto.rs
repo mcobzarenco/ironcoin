@@ -145,9 +145,11 @@ pub fn sign(secret_key: &SecretKey, message: &[u8]) -> Signature {
     sign_detached(message, secret_key)
 }
 
-pub fn verify_signature(
-    public_key: &PublicKey, message: &[u8], signature: &Signature) -> bool {
-    verify_detached(signature, message, &ed25519::PublicKey(public_key.0))
+pub fn verify_signature(public_key: &PublicKey, message: &[u8],
+                        signature: &Signature) -> SimplesResult<()> {
+    if verify_detached(signature, message, &ed25519::PublicKey(public_key.0)) {
+        Ok(())
+    } else { Err(SimplesError::new("Invalid signature.")) }
 }
 
 impl PublicKey {
@@ -210,8 +212,8 @@ pub fn sign_message<M: MessageStatic>(
 }
 
 pub fn verify_signed_message<M: MessageStatic>(
-    public_key: &PublicKey, message: &M, signature: &Signature) -> bool
-{
+    public_key: &PublicKey, message: &M, signature: &Signature)
+    -> SimplesResult<()> {
     let msg_bytes: &[u8] = &message.write_to_bytes().unwrap();
     verify_signature(public_key, msg_bytes, signature)
 }
@@ -255,7 +257,9 @@ pub fn slice_to_signature(bytes: &[u8]) -> SimplesResult<Signature> {
     Ok(Signature(sign))
 }
 
-// Tests:
+/*****  Tests  *****/
+
+use rustc_serialize::json;
 
 #[test]
 fn test_digest_from_u64() {
