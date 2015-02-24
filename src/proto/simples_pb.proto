@@ -71,10 +71,10 @@ message BlockWithDiff {
 /*****  Wallet Messages  *****/
 
 message Wallet {
-    repeated WalletKey keys = 1;
+    repeated WalletKeypair keypairs = 1;
 }
 
-message WalletKey {
+message WalletKeypair {
     optional bytes public_key = 1;
     optional bytes secret_key = 2;
     optional string name = 3;
