@@ -1,24 +1,28 @@
 use time::now_utc;
 
 use crypto::{HashDigest, PublicKey, SecretKey, gen_keypair, hash_message,
-             sign_message};
+             sign_message, Signature, slice_to_signature, verify_signed_message};
 use error::{SimplesError, SimplesResult};
 use simples_pb::{Block, BlockWithDiff, HashedBlock, SignedBlock, Transaction};
 use tx::{TransactionBuilder, TransactionExt};
 
-fn create_genesis_block(tx: Transaction) -> SimplesResult<HashedBlock> {
+fn create_genesis_block(staker_pk: &PublicKey, staker_sk: &SecretKey,
+                        tx: Transaction) -> SimplesResult<HashedBlock> {
     if tx.get_commit().get_bounty() != 0 || tx.get_commit().has_bounty_pk() {
         return Err(SimplesError::new(
             "Transactions must not have a bounty set in a genesis block."));
     }
     try!(tx.verify_signatures());
     let mut genesis = HashedBlock::new();
-    genesis.mut_signed_block().mut_block().mut_transactions().push(tx);
+    genesis.mut_signed_block().mut_block().set_staker_pk(staker_pk.0.to_vec());
     genesis.mut_signed_block().mut_block().set_previous(
         HashDigest::from_u64(0).0.to_vec());
     genesis.mut_signed_block().mut_block().set_height(0);
     genesis.mut_signed_block().mut_block().set_timestamp(
         now_utc().to_timespec().sec);
+    genesis.mut_signed_block().mut_block().mut_transactions().push(tx);
+
+    genesis.mut_signed_block().sign(staker_sk);
     genesis.compute_hash();
     Ok(genesis)
 }
@@ -49,7 +53,7 @@ impl GenesisBuilder {
         }
         let genesis_tx = tx_builder.build().unwrap();
         assert!(genesis_tx.verify_signatures().is_ok());
-        create_genesis_block(genesis_tx).unwrap()
+        create_genesis_block(&public_key, &secret_key, genesis_tx).unwrap()
     }
 }
 
