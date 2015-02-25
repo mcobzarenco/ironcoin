@@ -2,7 +2,7 @@ use std::cmp::max;
 
 use time::now_utc;
 
-use crypto::{hash, HashDigest, PublicKey, SecretKey, slice_to_pk};
+use crypto::{hash, HashDigest, PublicKey, SecretKey};
 use error::SimplesResult;
 use simples_pb::Wallet;
 use wallet::{self, WalletKeypairExt};
@@ -63,7 +63,7 @@ impl Staker {
         let proof_hashes: Vec<HashDigest> =
                 self.staking_keys.get_keypairs().iter().map(|kp| {
                 let proof = compute_proof_hash(
-                    &self.head_block, &slice_to_pk(&kp.get_public_key()).unwrap());
+                    &self.head_block, &kp.decode_public_key().unwrap());
                 proof
             }).collect();
         // println!("untried={}, max_timestmap={}", self.untried_timestamp, max_timestamp);

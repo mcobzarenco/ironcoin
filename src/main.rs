@@ -40,12 +40,12 @@ use rustc_serialize::base64::{self, FromBase64, ToBase64};
 
 use block::GenesisBuilder;
 use blocktree::BlockTreeStore;
-use crypto::{slice_to_pk, slice_to_sk};
+use crypto::PublicKey;
 use error::{SimplesResult, SimplesError};
 use service::{RpcService, SimplesService};
 use simples_pb::HashedBlock;
 use store::RocksStore;
-use wallet::{load_proto_from_file, WalletExt};
+use wallet::{load_proto_from_file, WalletExt, WalletKeypairExt};
 
 fn create_genesis_block_from_cmdline(tx_strs: &[String])
                                      -> SimplesResult<HashedBlock>
@@ -59,7 +59,7 @@ fn create_genesis_block_from_cmdline(tx_strs: &[String])
         };
 
         let maybe_destination =
-            slice_to_pk(&try!(FromBase64::from_base64(transfer_parts[0])));
+            PublicKey::from_slice(&try!(FromBase64::from_base64(transfer_parts[0])));
         if maybe_destination.is_err() {
             return Err(SimplesError::new(&format!(
                 "Could not parse \"{}\" as an address.", transfer_parts[0])));
@@ -155,6 +155,20 @@ used multiple times to specify genesis transactions.", "ADDR:AMOUNT");
                     |wkey| println!("{}", wallet::pretty_format(wkey))).collect();
             }
         }
+        if matches.opt_present("add") {
+            let addr_pattern = matches.opt_str("add").unwrap_or(String::new());
+            let addr_parts: Vec<&str> = addr_pattern.split_str(":").collect();
+            if addr_parts.len() != 2 {
+                println!("You need to specify the address you wish \
+                          to add as NAME:PKEY.");
+                return;
+            }
+            let addr_name = addr_parts[0];
+            let public_key = PublicKey::from_slice(
+                &FromBase64::from_base64(addr_parts[1]).unwrap()).unwrap();
+            wallet.add_public_key(&addr_name, &public_key);
+            wallet::save_to_file(&wallet_file, &wallet).unwrap();
+        }
     }
     let mut peers = vec![];
     if matches.opt_present("p") {
@@ -195,12 +209,9 @@ used multiple times to specify genesis transactions.", "ADDR:AMOUNT");
                     println!("{}", wallet::pretty_format(*wkey))}).collect();
                 return;
             }
-            let source_sk =
-                slice_to_sk(source_keys[0].get_secret_key()).unwrap();
-            let source_pk =
-                slice_to_pk(source_keys[0].get_public_key()).unwrap();
-            let destination_pk =
-                slice_to_pk(destination_keys[0].get_public_key()).unwrap();
+            let source_sk = source_keys[0].decode_secret_key().unwrap();
+            let source_pk = source_keys[0].decode_public_key().unwrap();
+            let destination_pk = destination_keys[0].decode_public_key().unwrap();
             tx_builder
                 .add_transfer(&source_sk, &source_pk, &destination_pk,
                               amount, op_number)

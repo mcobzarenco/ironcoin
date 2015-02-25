@@ -26,7 +26,7 @@ fn make_genesis_block_diff(genesis: HashedBlock)
             genesis.get_block().get_transactions()[0].get_commit().clone();
         for transfer in commit.get_transfers() {
             let destination =
-                try!(PublicKey::from_bytes(transfer.get_destination_pk()));
+                try!(PublicKey::from_slice(transfer.get_destination_pk()));
             match cache.entry(destination) {
                 hash_map::Entry::Occupied(mut tokens) => {
                     let new_balance = tokens.get() + transfer.get_tokens();
@@ -81,7 +81,7 @@ impl<Store: KeyValueStore> BlockTreeStore<Store> {
         let mut blocktree;
         let maybe_genesis_hash =
             match try!(store.get_bytes(GENESIS_FIELD.as_bytes())) {
-                Some(hash_raw) => Some(try!(HashDigest::from_bytes(&hash_raw))),
+                Some(hash_raw) => Some(try!(HashDigest::from_slice(&hash_raw))),
                 None => None
             };
         match (maybe_genesis_hash, new_genesis) {
@@ -131,7 +131,7 @@ impl<Store: KeyValueStore> BlockTreeStore<Store> {
     pub fn get_head_hash(&self) -> SimplesResult<HashDigest> {
         let head_hash_raw = try!(self.store.get_bytes(HEAD_FIELD.as_bytes()))
             .expect("FATAL: Corrupted blocktree, store is headless.");
-        let maybe_head_hash = HashDigest::from_bytes(&head_hash_raw);
+        let maybe_head_hash = HashDigest::from_slice(&head_hash_raw);
         assert!(maybe_head_hash.is_ok(),
                 "FATAL: Corrupted blocktree, head block has invalid hash.");
         Ok(maybe_head_hash.unwrap())
@@ -162,7 +162,7 @@ impl<Store: KeyValueStore> BlockTreeStore<Store> {
         let genesis_hash_raw =
             try!(self.store.get_bytes(GENESIS_FIELD.as_bytes())).expect(
                 "FATAL: Corrupted blocktree, genesis hash key: {} is not set.");
-        let maybe_genesis_hash = HashDigest::from_bytes(&genesis_hash_raw);
+        let maybe_genesis_hash = HashDigest::from_slice(&genesis_hash_raw);
         assert!(maybe_genesis_hash.is_ok(),
                 "FATAL: Corrupted blocktree, genesis block has invalid hash.");
         Ok(maybe_genesis_hash.unwrap())
@@ -314,18 +314,17 @@ fn test_make_genesis_patch_non_unqiue_dest() {
     builder.add_transfer(pk2.clone(), 271);
     builder.add_transfer(pk1.clone(), 5000);
     let genesis = builder.build();
-    let maybe_diff = make_genesis_block_diff(genesis);
-    assert!(maybe_diff.is_ok());
-    assert!(2 == maybe_diff.as_ref().unwrap().get_diff().len());
+    let mut block_diff = make_genesis_block_diff(genesis).unwrap();
+    assert_eq!(2, block_diff.get_diff().len());
     let patch_map: HashMap<PublicKey, BalancePatch> =
-        FromIterator::from_iter(maybe_diff.unwrap().get_diff().iter().map(
-            |patch| {(PublicKey::from_bytes(patch.get_public_key()).unwrap(),
+        FromIterator::from_iter(block_diff.take_diff().into_iter().map(
+            |patch| {(PublicKey::from_slice(patch.get_public_key()).unwrap(),
                       patch.clone())}));
 
     let maybe_patch_pk1 = patch_map.get(&pk1);
     assert!(maybe_patch_pk1.is_some());
     let patch_pk1 = maybe_patch_pk1.unwrap();
-    assert!(pk1 == PublicKey::from_bytes(patch_pk1.get_public_key()).unwrap());
+    assert!(pk1 == PublicKey::from_slice(patch_pk1.get_public_key()).unwrap());
     assert!(0 == patch_pk1.get_before().get_tokens());
     assert!(0 == patch_pk1.get_before().get_op_index());
     assert!(5101 == patch_pk1.get_after().get_tokens());
@@ -334,7 +333,7 @@ fn test_make_genesis_patch_non_unqiue_dest() {
     let maybe_patch_pk2 = patch_map.get(&pk2);
     assert!(maybe_patch_pk2.is_some());
     let patch_pk2 = maybe_patch_pk2.unwrap();
-    assert!(pk2 == PublicKey::from_bytes(patch_pk2.get_public_key()).unwrap());
+    assert!(pk2 == PublicKey::from_slice(patch_pk2.get_public_key()).unwrap());
     assert!(0 == patch_pk2.get_before().get_tokens());
     assert!(0 == patch_pk2.get_before().get_op_index());
     assert!(271 == patch_pk2.get_after().get_tokens());
@@ -387,10 +386,8 @@ fn test_blocktree_sets_head_and_genesis() {
     assert!(maybe_genesis_hash.is_some());
     assert!(maybe_head_hash.is_some());
 
-    let genesis_hash =
-        HashDigest::from_bytes(&maybe_genesis_hash.unwrap()).unwrap();
-    let head_hash =
-        HashDigest::from_bytes(&maybe_head_hash.unwrap()).unwrap();
+    let genesis_hash = HashDigest::from_slice(&maybe_genesis_hash.unwrap()).unwrap();
+    let head_hash = HashDigest::from_slice(&maybe_head_hash.unwrap()).unwrap();
     assert!(genesis.decode_hash().unwrap() == genesis_hash);
     assert!(genesis_hash == head_hash);
     assert!(blocktree.get_genesis_hash().unwrap() == genesis_hash);

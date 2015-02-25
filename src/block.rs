@@ -1,7 +1,7 @@
 use time::now_utc;
 
-use crypto::{HashDigest, PublicKey, SecretKey, gen_keypair, hash_message,
-             sign_message, Signature, slice_to_signature, verify_signed_message};
+use crypto::{HashDigest, PublicKey, SecretKey, Signature,
+             gen_keypair, hash_message, sign_message, verify_signed_message};
 use error::{SimplesError, SimplesResult};
 use simples_pb::{Block, BlockWithDiff, HashedBlock, SignedBlock, Transaction};
 use tx::{TransactionBuilder, TransactionExt};
@@ -78,7 +78,7 @@ impl HashedBlockExt for HashedBlock {
     }
 
     fn decode_hash(&self) -> SimplesResult<HashDigest> {
-        HashDigest::from_bytes(self.get_hash())
+        HashDigest::from_slice(self.get_hash())
     }
 
     fn decode_previous(&self) -> SimplesResult<HashDigest> {
@@ -104,8 +104,8 @@ impl HashedBlockExt for HashedBlock {
     }
 
     fn verify_hash(&self) -> SimplesResult<()> {
-        let block_hash = try!(HashDigest::from_bytes(&self.get_hash()));
-        try!(HashDigest::from_bytes(self.get_block().get_previous()));
+        let block_hash = try!(HashDigest::from_slice(&self.get_hash()));
+        try!(self.decode_previous());
 
         let computed_hash = hash_message(self.get_signed_block());
         if computed_hash == block_hash { Ok(()) }
@@ -132,7 +132,7 @@ pub trait SignedBlockExt {
 
 impl SignedBlockExt for SignedBlock {
     fn decode_signature(&self) -> SimplesResult<Signature> {
-        slice_to_signature(self.get_signature())
+        Signature::from_slice(self.get_signature())
     }
 
     fn sign(&mut self, secret_key: &SecretKey) {
@@ -154,11 +154,11 @@ pub trait BlockExt {
 
 impl BlockExt for Block {
     fn decode_previous(&self) -> SimplesResult<HashDigest> {
-        HashDigest::from_bytes(self.get_previous())
+        HashDigest::from_slice(self.get_previous())
     }
 
     fn decode_staker_pk(&self) -> SimplesResult<PublicKey> {
-        PublicKey::from_bytes(self.get_staker_pk())
+        PublicKey::from_slice(self.get_staker_pk())
     }
 }
 

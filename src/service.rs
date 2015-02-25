@@ -200,7 +200,7 @@ impl RpcService for SimplesService {
         response.set_status(ResponseStatus::OK);
         let mut blocks = vec![];
         for hash_bytes in request.take_blocks().into_iter() {
-            let block_hash = match HashDigest::from_bytes(&hash_bytes) {
+            let block_hash = match HashDigest::from_slice(&hash_bytes) {
                 Ok(h) => h,
                 Err(err) => {
                     response.set_status(ResponseStatus::INVALID_HASH);
@@ -268,19 +268,16 @@ impl RpcService for SimplesService {
             response.set_status(ResponseStatus::INVALID_BLOCK);
             return Ok(response);
         }
-        let block_hash =
-            HashDigest::from_bytes(hashed_block.get_hash()).unwrap();
-        println!("Block is valid ({} tx), hash={}",
-                 hashed_block.get_block().get_transactions().len(),
-                 HashDigest::from_bytes(hashed_block.get_hash()).unwrap());
+        let block_hash: HashDigest =
+            HashDigest::from_slice(hashed_block.get_hash()).unwrap();
         if block_hash == try!(self.blocktree.get_head_hash()) {
             println!("Head is already there!");
             response.set_status(ResponseStatus::OK);
             return Ok(response);
         }
 
-        let maybe_prev_head = HashDigest::from_bytes(
-            hashed_block.get_block().get_previous());
+        let maybe_prev_head: SimplesResult<HashDigest> =
+                HashDigest::from_slice(hashed_block.get_block().get_previous());
         if maybe_prev_head.is_err() {
             println!("Received a block with invalid previous from peer");
             response.set_status(ResponseStatus::INVALID_BLOCK);
@@ -345,7 +342,7 @@ impl SyncBlocktree for SimplesService {
         let mut missing_blocks = vec![];
         let mut oldest_block = true;
         for hash_bytes in response.take_ancestors().into_iter() {
-            let maybe_ancestor_hash = HashDigest::from_bytes(&hash_bytes);
+            let maybe_ancestor_hash = HashDigest::from_slice(&hash_bytes);
             if maybe_ancestor_hash.is_err() {
                 println!("Received GetBlocktreeResponse containing an invalid \
                           block hash.");

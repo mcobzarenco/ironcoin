@@ -1,35 +1,36 @@
-use std::cmp::{Ordering};
+use std::cmp::Ordering;
 use std::error::Error;
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::slice::bytes::copy_memory;
 
 use protobuf::MessageStatic;
-use rustc_serialize::{Decodable, Decoder, Encodable, Encoder};
 use rustc_serialize::base64::{self, ToBase64};
-use sodiumoxide::crypto::hash::sha512;
-use sodiumoxide::crypto::sign::ed25519::{self,
-    PUBLICKEYBYTES, SECRETKEYBYTES, SIGNATUREBYTES,
-    sign_detached, verify_detached};
+use sodiumoxide::crypto::hash::sha512::{self, HASHBYTES};
+use sodiumoxide::crypto::sign::ed25519::{
+    self, PUBLICKEYBYTES, SECRETKEYBYTES, SIGNATUREBYTES};
 
 use error::{SimplesError, SimplesResult};
-
-pub use sodiumoxide::crypto::hash::sha512::HASHBYTES;
-pub use sodiumoxide::crypto::sign::ed25519::{SecretKey, Signature};
-
-pub trait CryptoPrimitive {
-    fn bytes(&self) -> &[u8];
-}
 
 // HashDigest:
 
 pub struct HashDigest(pub [u8; HASHBYTES]);
 
-pub fn hash(bytes: &[u8]) -> HashDigest {
-    HashDigest(sha512::hash(bytes).0)
-}
-
 impl HashDigest {
+    pub fn as_slice(&self) -> &[u8] { &self.0 }
+
+    pub fn from_slice(bytes: &[u8]) -> SimplesResult<HashDigest> {
+        if bytes.len() != HASHBYTES {
+            Err(SimplesError::new(&format!(
+                "Invalid length for a hash {} != {} (required).",
+                bytes.len(), HASHBYTES)))
+        } else {
+            let mut digest = HashDigest([0; HASHBYTES]);
+            copy_memory(&mut digest.0, bytes);
+            Ok(digest)
+        }
+    }
+
     pub fn from_u64(mut value: u64) -> HashDigest {
         let mut proof_hash = HashDigest([0; HASHBYTES]);
         let mut index = 0us;
@@ -39,19 +40,6 @@ impl HashDigest {
             index += 1;
         }
         proof_hash
-    }
-
-    pub fn from_bytes(bytes: &[u8]) -> SimplesResult<HashDigest> {
-        match bytes.len() != HASHBYTES {
-            true => Err(SimplesError::new(&format!(
-                "Invalid length for a hash {} != {} (required).",
-                bytes.len(), HASHBYTES))),
-            false => {
-                let mut digest = HashDigest([0; HASHBYTES]);
-                copy_memory(&mut digest.0, bytes);
-                Ok(digest)
-            }
-        }
     }
 
     pub fn multiply_u8_in_place(&mut self, other: u8) {
@@ -73,21 +61,21 @@ impl HashDigest {
     }
 }
 
-impl CryptoPrimitive for HashDigest {
-    fn bytes(&self) -> &[u8] { &self.0 }
-}
-
 impl Clone for HashDigest {
-    fn clone(&self) -> HashDigest { HashDigest::from_bytes(&self.0).unwrap() }
+    fn clone(&self) -> Self { HashDigest::from_slice(&self.0).unwrap() }
 }
 
-impl<C: CryptoPrimitive> PartialEq for C {
-    fn eq(&self, other: &C) -> bool { self.bytes() == other.bytes() }
+impl PartialEq for HashDigest {
+    fn eq(&self, other: &HashDigest) -> bool {
+        self.as_slice() == other.as_slice()
+    }
 }
-
-// impl<C: CryptoPrimitive> Eq for C {}
 
 impl Eq for HashDigest {}
+
+impl Hash for HashDigest {
+    fn hash<H: Hasher>(&self, state: &mut H) { state.write(self.as_slice()); }
+}
 
 impl PartialOrd for HashDigest {
     fn partial_cmp(&self, other: &HashDigest) -> Option<Ordering> {
@@ -111,92 +99,162 @@ impl Ord for HashDigest {
 
 impl fmt::Debug for HashDigest {
     fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-        write!(formatter, "{:?}", &self.0[..])
+        write!(formatter, "{:?}", self.as_slice())
     }
 }
 
 impl fmt::Display for HashDigest {
     fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-        write!(formatter, "{}", &self.0.to_base64(base64::STANDARD))
+        write!(formatter, "{}", self.as_slice().to_base64(base64::STANDARD))
     }
 }
 
-impl Encodable for HashDigest {
-    fn encode<E: Encoder>(&self, encoder: &mut E) -> Result<(), E::Error> {
-        self.0.to_vec().encode(encoder)
-    }
-}
-
-impl Decodable for HashDigest {
-    fn decode<D: Decoder>(decoder: &mut D) -> Result<Self, D::Error> {
-        let bytes = &try!(<Vec<u8> as Decodable>::decode(decoder));
-        match HashDigest::from_bytes(bytes) {
-            Ok(digest) => Ok(digest),
-            Err(err) => Err(decoder.error(err.description()))
-        }
-    }
+pub fn hash(bytes: &[u8]) -> HashDigest {
+    HashDigest(sha512::hash(bytes).0)
 }
 
 // PublicKey:
 
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub struct PublicKey(pub [u8; PUBLICKEYBYTES]);
 
-pub fn sign(secret_key: &SecretKey, message: &[u8]) -> Signature {
-    sign_detached(message, secret_key)
-}
-
-pub fn verify_signature(public_key: &PublicKey, message: &[u8],
-                        signature: &Signature) -> SimplesResult<()> {
-    if verify_detached(signature, message, &ed25519::PublicKey(public_key.0)) {
-        Ok(())
-    } else { Err(SimplesError::new("Invalid signature.")) }
-}
-
 impl PublicKey {
-    pub fn from_bytes(bytes: &[u8]) -> SimplesResult<PublicKey> {
+    pub fn as_slice(&self) -> &[u8] { &self.0 }
+
+    pub fn from_slice(bytes: &[u8]) -> SimplesResult<PublicKey> {
         if bytes.len() != PUBLICKEYBYTES {
-            Err(SimplesError::new(&format!(
-                "Invalid length for a public key {} != {} (required).",
-                bytes.len(), PUBLICKEYBYTES)))
+            Err(SimplesError::new(
+                &format!("Invalid public key length {} != {} (required)",
+                         bytes.len(), PUBLICKEYBYTES)))
         } else {
-            let mut digest = PublicKey([0; PUBLICKEYBYTES]);
-            copy_memory(&mut digest.0, bytes);
-            Ok(digest)
+            let mut public_key = PublicKey([0; PUBLICKEYBYTES]);
+            copy_memory(&mut public_key.0, bytes);
+            Ok(public_key)
         }
-    }
-}
-
-impl PartialEq for PublicKey {
-    fn eq(&self, other: &PublicKey) -> bool { &self.0 == &other.0 }
-}
-
-impl Eq for PublicKey {}
-
-impl Hash for PublicKey {
-    fn hash<H: Hasher>(&self, state: &mut H) { state.write(&self.0); }
-}
-
-impl Clone for PublicKey {
-    fn clone(&self) -> PublicKey { PublicKey::from_bytes(&self.0).unwrap() }
-}
-
-impl fmt::Debug for PublicKey {
-    fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-        write!(formatter, "{:?}", &self.0)
     }
 }
 
 impl fmt::Display for PublicKey {
     fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-        write!(formatter, "{}", &self.0.to_base64(base64::STANDARD))
+        write!(formatter, "{}", self.as_slice().to_base64(base64::STANDARD))
     }
 }
 
 // SecretKey:
 
+pub struct SecretKey(pub [u8; SECRETKEYBYTES]);
+
+impl SecretKey {
+    pub fn as_slice(&self) -> &[u8] { &self.0 }
+
+    pub fn from_slice(bytes: &[u8]) -> SimplesResult<SecretKey> {
+        if bytes.len() != SECRETKEYBYTES {
+            Err(SimplesError::new(
+                &format!("Invalid secret key length {} != {} (required)",
+                         bytes.len(), SECRETKEYBYTES)))
+        } else {
+            let mut secret_key = SecretKey([0; SECRETKEYBYTES]);
+            copy_memory(&mut secret_key.0, bytes);
+            Ok(secret_key)
+        }
+    }
+}
+
+impl Drop for SecretKey {
+    fn drop(&mut self) { copy_memory(&mut self.0, &[0; SECRETKEYBYTES]); }
+}
+
+impl Clone for SecretKey {
+    fn clone(&self) -> Self { SecretKey::from_slice(&self.0).unwrap() }
+}
+
+impl PartialEq for SecretKey {
+    fn eq(&self, other: &SecretKey) -> bool {
+        self.as_slice() == other.as_slice()
+    }
+}
+
+impl Eq for SecretKey {}
+
+impl Hash for SecretKey {
+    fn hash<H: Hasher>(&self, state: &mut H) { state.write(self.as_slice()); }
+}
+
+impl fmt::Debug for SecretKey {
+    fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        write!(formatter, "{:?}", self.as_slice())
+    }
+}
+
+impl fmt::Display for SecretKey {
+    fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        write!(formatter, "{}", self.as_slice().to_base64(base64::STANDARD))
+    }
+}
+
 pub fn gen_keypair() -> (PublicKey, SecretKey) {
     let (pk, sk) = ed25519::gen_keypair();
-    (PublicKey(pk.0), sk)
+    (PublicKey(pk.0), SecretKey(sk.0))
+}
+
+// Signature:
+
+pub struct Signature(pub [u8; SIGNATUREBYTES]);
+
+impl Signature {
+    pub fn as_slice(&self) -> &[u8] { &self.0 }
+
+    pub fn from_slice(bytes: &[u8]) -> SimplesResult<Signature> {
+        if bytes.len() != SIGNATUREBYTES {
+            Err(SimplesError::new(
+                &format!("Invalid signature length {} != {} (required)",
+                         bytes.len(), SIGNATUREBYTES)))
+        } else {
+            let mut signature = Signature([0; SIGNATUREBYTES]);
+            copy_memory(&mut signature.0, bytes);
+            Ok(signature)
+        }
+    }
+}
+
+impl Clone for Signature {
+    fn clone(&self) -> Self { Signature::from_slice(&self.0).unwrap() }
+}
+
+impl PartialEq for Signature {
+    fn eq(&self, other: &Signature) -> bool {
+        self.as_slice() == other.as_slice()
+    }
+}
+
+impl Eq for Signature {}
+
+impl Hash for Signature {
+    fn hash<H: Hasher>(&self, state: &mut H) { state.write(self.as_slice()); }
+}
+
+impl fmt::Debug for Signature {
+    fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        write!(formatter, "{:?}", self.as_slice())
+    }
+}
+
+impl fmt::Display for Signature {
+    fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        write!(formatter, "{}", self.as_slice().to_base64(base64::STANDARD))
+    }
+}
+
+pub fn sign(secret_key: &SecretKey, message: &[u8]) -> Signature {
+    Signature(ed25519::sign_detached(message, &ed25519::SecretKey(secret_key.0)).0)
+}
+
+pub fn verify_signature(public_key: &PublicKey, message: &[u8],
+                        signature: &Signature) -> SimplesResult<()> {
+    if ed25519::verify_detached(&ed25519::Signature(signature.0),
+                                message, &ed25519::PublicKey(public_key.0)) {
+        Ok(())
+    } else { Err(SimplesError::new("Invalid signature.")) }
 }
 
 // Utilities for crypto on protobufs:
@@ -216,45 +274,6 @@ pub fn verify_signed_message<M: MessageStatic>(
     -> SimplesResult<()> {
     let msg_bytes: &[u8] = &message.write_to_bytes().unwrap();
     verify_signature(public_key, msg_bytes, signature)
-}
-
-pub fn slice_to_pk(bytes: &[u8]) -> SimplesResult<PublicKey> {
-    if bytes.len() != PUBLICKEYBYTES {
-        return Err(SimplesError::new(
-            &format!("Invalid public key length {} != {} (requires)",
-                     bytes.len(), PUBLICKEYBYTES)));
-    }
-    let mut key:[u8; PUBLICKEYBYTES] = [0; PUBLICKEYBYTES];
-    for i in range(0, PUBLICKEYBYTES) {
-        key[i] = bytes[i];
-    }
-    Ok(PublicKey(key))
-}
-
-pub fn slice_to_sk(bytes: &[u8]) -> SimplesResult<SecretKey> {
-    if bytes.len() != SECRETKEYBYTES {
-        return Err(SimplesError::new(
-            &format!("Invalid secret key length {} != {} (requires)",
-                     bytes.len(), SECRETKEYBYTES)));
-    }
-    let mut key:[u8; SECRETKEYBYTES] = [0; SECRETKEYBYTES];
-    for i in range(0, SECRETKEYBYTES) {
-        key[i] = bytes[i];
-    }
-    Ok(SecretKey(key))
-}
-
-pub fn slice_to_signature(bytes: &[u8]) -> SimplesResult<Signature> {
-    if bytes.len() != SIGNATUREBYTES {
-        return Err(SimplesError::new(
-            &format!("Invalid signature length {} != {} (requires)",
-                     bytes.len(), SIGNATUREBYTES)));
-    }
-    let mut sign:[u8; SIGNATUREBYTES] = [0; SIGNATUREBYTES];
-    for i in range(0, SIGNATUREBYTES) {
-        sign[i] = bytes[i];
-    }
-    Ok(Signature(sign))
 }
 
 /*****  Tests  *****/
@@ -339,25 +358,25 @@ fn test_digest_ord() {
     }
 }
 
-#[test]
-fn test_digest_encoding() {
-    let hash1 = hash(b"hello world2");
-    let hash2 = HashDigest::from_u64(123456);
+// #[test]
+// fn test_digest_encoding() {
+//     let hash1 = hash(b"hello world2");
+//     let hash2 = HashDigest::from_u64(123456);
 
-    let hash1_enc = json::encode(&hash1).unwrap();
-    let hash2_enc = json::encode(&hash2).unwrap();
+//     let hash1_enc = json::encode(&hash1).unwrap();
+//     let hash2_enc = json::encode(&hash2).unwrap();
 
-    let hash1_dec: HashDigest = json::decode(&hash1_enc).unwrap();
-    let hash2_dec: HashDigest = json::decode(&hash2_enc).unwrap();
+//     let hash1_dec: HashDigest = json::decode(&hash1_enc).unwrap();
+//     let hash2_dec: HashDigest = json::decode(&hash2_enc).unwrap();
 
-    println!("hash1 = {}", hash1_enc);
-    println!("hash2 = {}", hash2_enc);
-    println!("hash1_dec = {}", hash1_dec);
-    println!("hash2_dec = {}", hash2_dec);
+//     println!("hash1 = {}", hash1_enc);
+//     println!("hash2 = {}", hash2_enc);
+//     println!("hash1_dec = {}", hash1_dec);
+//     println!("hash2_dec = {}", hash2_dec);
 
-    assert!(hash1 == hash1_dec);
-    assert!(hash2 == hash2_dec);
-}
+//     assert!(hash1 == hash1_dec);
+//     assert!(hash2 == hash2_dec);
+// }
 
 // #[test]
 // fn test_digest() {

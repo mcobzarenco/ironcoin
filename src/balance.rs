@@ -14,7 +14,7 @@ pub trait BalancePatchExt {
 
 impl BalancePatchExt for BalancePatch {
     fn decode_public_key(&self) -> SimplesResult<PublicKey> {
-        PublicKey::from_bytes(&self.get_public_key())
+        PublicKey::from_slice(&self.get_public_key())
     }
 
     fn reverse(&self) -> Self {
@@ -42,7 +42,7 @@ pub trait Patchable {
 impl<LedgerMutator: LedgerReader + LedgerWriter>
     Patchable for LedgerMutator {
     fn apply_patch(&mut self, patch: BalancePatch) -> SimplesResult<()> {
-        let public_key = try!(PublicKey::from_bytes(patch.get_public_key()));
+        let public_key = try!(PublicKey::from_slice(patch.get_public_key()));
         let before_balance = try!(self.get_balance(&public_key));
         if before_balance != *patch.get_before() {
             return Err(SimplesError::new(&format!(
@@ -79,9 +79,9 @@ impl<'a, L: 'a + LedgerReader> LedgerSnapshot<'a, L> {
     pub fn add_transfer(&mut self, transfer: &Transfer) ->
         SimplesResult<()>
     {
-        let source_pk = try!(PublicKey::from_bytes(transfer.get_source_pk()));
+        let source_pk = try!(PublicKey::from_slice(transfer.get_source_pk()));
         let destination_pk =
-            try!(PublicKey::from_bytes(transfer.get_destination_pk()));
+            try!(PublicKey::from_slice(transfer.get_destination_pk()));
         let mut source = try!(self.get_balance(&source_pk));
         let mut destination = try!(self.get_balance(&destination_pk));
 

@@ -3,8 +3,7 @@ use std::vec;
 
 use protobuf::Message;
 
-use crypto::{PublicKey, SecretKey, sign, slice_to_signature, slice_to_pk,
-             verify_signature};
+use crypto::{PublicKey, SecretKey, Signature, sign, verify_signature};
 use simples_pb::{Commitment, DetachedSignature, Transaction, Transfer};
 use error::{SimplesError, SimplesResult};
 
@@ -22,9 +21,10 @@ impl TransactionExt for Transaction {
         for transfer in self.get_commit().get_transfers().iter() {
             match sign_map.get(transfer.get_source_pk()) {
                 Some(sign_bytes) => {
-                    let pk = try!(slice_to_pk(transfer.get_source_pk()));
-                    let signature = try!(slice_to_signature(&sign_bytes));
-                    try!(verify_signature(&pk, commit_bytes, &signature));
+                    let public_key =
+                        try!(PublicKey::from_slice(transfer.get_source_pk()));
+                    let signature = try!(Signature::from_slice(sign_bytes));
+                    try!(verify_signature(&public_key, commit_bytes, &signature));
                 },
                 None => return Err(SimplesError::new("Missing key."))
             }
@@ -78,12 +78,11 @@ impl TransactionBuilder {
             .zip(self.transfer_secret_keys.iter())
         {
             let signature = sign(secret_key, commit_bytes);
-            let pk_bytes = vec::as_vec(transfer.get_source_pk()).clone();
-            let pk = slice_to_pk(&pk_bytes).unwrap();
+            let pk = try!(PublicKey::from_slice(transfer.get_source_pk()));
             match verify_signature(&pk, commit_bytes, &signature) {
                 Ok(_) => {
                     let mut sign = DetachedSignature::new();
-                    sign.set_public_key(pk_bytes);
+                    sign.set_public_key(pk.0.to_vec());
                     sign.set_payload(signature.0.to_vec());
                     transaction.mut_signatures().push(sign);
                 },
