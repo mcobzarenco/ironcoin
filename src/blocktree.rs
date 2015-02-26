@@ -6,15 +6,15 @@ use balance::{BalancePatchExt, LedgerReader, LedgerWriter, LedgerSnapshot,
               Patchable};
 use block::{BlockWithDiffExt, HashedBlockExt};
 use crypto::{HashDigest, PublicKey};
-use error::{SimplesError, SimplesResult};
-use simples_pb::{Balance, BalancePatch, BlockWithDiff, HashedBlock};
+use error::{IroncError, IroncResult};
+use ironcoin_pb::{Balance, BalancePatch, BlockWithDiff, HashedBlock};
 use store::{MessageStore, KeyValueStore, ProtobufStore};
 
 const GENESIS_FIELD: &'static str = "meta:genesis";
 const HEAD_FIELD: &'static str = "meta:head";
 
 fn make_genesis_block_diff(genesis: HashedBlock)
-                           -> SimplesResult<BlockWithDiff>
+                           -> IroncResult<BlockWithDiff>
 {
     try!(genesis.verify());
     let num_tx = genesis.get_block().get_transactions().len();
@@ -56,7 +56,7 @@ fn make_genesis_block_diff(genesis: HashedBlock)
         }
         Ok(block_diff)
     } else {
-         Err(SimplesError::new(
+         Err(IroncError::new(
              "Genesis block must contain at most 1 transaction."))
     }
 }
@@ -75,7 +75,7 @@ pub struct BlockTreeStore<Store: KeyValueStore> {
 
 impl<Store: KeyValueStore> BlockTreeStore<Store> {
     pub fn new(kv_store: Store, new_genesis: Option<HashedBlock>)
-               -> SimplesResult<Self>
+               -> IroncResult<Self>
     {
         let mut store = MessageStore::<Store>::new(kv_store);
         let mut blocktree;
@@ -88,7 +88,7 @@ impl<Store: KeyValueStore> BlockTreeStore<Store> {
             (Some(genesis_hash), Some(new_genesis_block)) => {
                 let new_genesis_hash = try!(new_genesis_block.decode_hash());
                 if new_genesis_hash != genesis_hash {
-                    return Err(SimplesError::new(&format!(
+                    return Err(IroncError::new(&format!(
                         "Blocktree already has genesis {} != {} (requested)",
                         genesis_hash, new_genesis_hash)));
                 }
@@ -115,20 +115,20 @@ impl<Store: KeyValueStore> BlockTreeStore<Store> {
                     try!(blocktree.apply_patch(patch.clone()));
                 }
             },
-            (None, None) => return Err(SimplesError::new(
+            (None, None) => return Err(IroncError::new(
                 "No genesis block was specified and store doesn't contain one."))
         }
         Ok(blocktree)
     }
 
-    pub fn get_head(&self) -> SimplesResult<HashedBlock> {
+    pub fn get_head(&self) -> IroncResult<HashedBlock> {
         let head_hash = try!(self.get_head_hash());
         let head = try!(self.get_block(&head_hash)).expect(
             "FATAL: Corrupted blocktree, head block missing from kv-store.");
         Ok(head)
     }
 
-    pub fn get_head_hash(&self) -> SimplesResult<HashDigest> {
+    pub fn get_head_hash(&self) -> IroncResult<HashDigest> {
         let head_hash_raw = try!(self.store.get_bytes(HEAD_FIELD.as_bytes()))
             .expect("FATAL: Corrupted blocktree, store is headless.");
         let maybe_head_hash = HashDigest::from_slice(&head_hash_raw);
@@ -137,12 +137,12 @@ impl<Store: KeyValueStore> BlockTreeStore<Store> {
         Ok(maybe_head_hash.unwrap())
     }
 
-    pub fn set_head(&mut self, new_head_hash: &HashDigest) -> SimplesResult<()> {
+    pub fn set_head(&mut self, new_head_hash: &HashDigest) -> IroncResult<()> {
         if *new_head_hash == try!(self.get_head_hash()) {
             return Ok(());
         }
         try!(try!(self.get_block(new_head_hash)).ok_or(
-            SimplesError::new(&format!(
+            IroncError::new(&format!(
                 "Tried to set head to {}, but it doesn't exist in the blocktree",
                 new_head_hash))));
         let mut patches = try!(self.snapshot_at(new_head_hash)).make_patches();
@@ -150,7 +150,7 @@ impl<Store: KeyValueStore> BlockTreeStore<Store> {
         self.store.set_bytes(HEAD_FIELD.as_bytes(), &new_head_hash.0)
     }
 
-    pub fn get_genesis(&self) -> SimplesResult<HashedBlock> {
+    pub fn get_genesis(&self) -> IroncResult<HashedBlock> {
         let genesis_hash = try!(self.get_genesis_hash());
         let genesis = try!(self.get_block(&genesis_hash)).expect(
             "FATAL: Corrupted blocktree store, genesis block missing \
@@ -158,7 +158,7 @@ impl<Store: KeyValueStore> BlockTreeStore<Store> {
         Ok(genesis)
     }
 
-    pub fn get_genesis_hash(&self) -> SimplesResult<HashDigest> {
+    pub fn get_genesis_hash(&self) -> IroncResult<HashDigest> {
         let genesis_hash_raw =
             try!(self.store.get_bytes(GENESIS_FIELD.as_bytes())).expect(
                 "FATAL: Corrupted blocktree, genesis hash key: {} is not set.");
@@ -169,21 +169,21 @@ impl<Store: KeyValueStore> BlockTreeStore<Store> {
     }
 
     pub fn get_block(&self, block_hash: &HashDigest)
-                     -> SimplesResult<Option<HashedBlock>> {
+                     -> IroncResult<Option<HashedBlock>> {
         Ok(try!(self.get_block_diff(block_hash)).map(|mut x| x.take_hashed_block()))
     }
 
-    pub fn insert_block(&mut self, block: HashedBlock) -> SimplesResult<()> {
+    pub fn insert_block(&mut self, block: HashedBlock) -> IroncResult<()> {
         try!(block.verify());
         let block_height = block.get_block().get_height();
         let previous_hash = try!(block.decode_previous());
         let previous_block =
-            try!(try!(self.get_block(&previous_hash)).ok_or(SimplesError::new(&format!(
+            try!(try!(self.get_block(&previous_hash)).ok_or(IroncError::new(&format!(
             "insert error: previous block {} missing from kv-store", previous_hash))));
         let previous_height = previous_block.get_block().get_height();
 
         if previous_height + 1 != block_height {
-            return Err(SimplesError::new(&format!(
+            return Err(IroncError::new(&format!(
                 "insert error: invalid block height {} (expected {})",
                 block_height, previous_height + 1)));
         }
@@ -202,14 +202,14 @@ impl<Store: KeyValueStore> BlockTreeStore<Store> {
     pub fn snapshot(&self) -> LedgerSnapshot<Self> { LedgerSnapshot::new(self) }
 
     pub fn snapshot_at(&self, block_hash: &HashDigest)
-                       -> SimplesResult<LedgerSnapshot<Self>>
+                       -> IroncResult<LedgerSnapshot<Self>>
     {
         let mut snapshot = LedgerSnapshot::new(self);
         let mut fast_forward_stack = vec![];
         {
             let mut target_ancestor =
                 try!(try!(self.get_block_diff(&block_hash))
-                     .ok_or(SimplesError::new(&format!("snapshot_at error: patch \
+                     .ok_or(IroncError::new(&format!("snapshot_at error: patch \
                             missing from kv-store for block {}", block_hash))));
             let mut head_ancestor =
                 try!(self.get_block_diff(&try!(self.get_head_hash()))).unwrap();
@@ -250,20 +250,20 @@ impl<Store: KeyValueStore> BlockTreeStore<Store> {
     }
 
     fn get_block_diff(&self, block_hash: &HashDigest)
-                      -> SimplesResult<Option<BlockWithDiff>> {
+                      -> IroncResult<Option<BlockWithDiff>> {
         let store_key = format_block_key(block_hash);
         self.store.get_message(store_key.as_bytes())
     }
 
     fn set_block_diff(&mut self, block_diff: &BlockWithDiff)
-                      -> SimplesResult<()>  {
+                      -> IroncResult<()>  {
         let store_key = format_block_key(&try!(block_diff.decode_hash()));
         self.store.set_message(store_key.as_bytes(), block_diff)
     }
 }
 
 impl<Store: KeyValueStore> LedgerReader for BlockTreeStore<Store> {
-    fn get_balance(&self, address: &PublicKey) -> SimplesResult<Balance> {
+    fn get_balance(&self, address: &PublicKey) -> IroncResult<Balance> {
         let db_key = format_balance_key(address);
         match try!(self.store.get_message(db_key.as_bytes())) {
             Some(balance) => Ok(balance),
@@ -279,7 +279,7 @@ impl<Store: KeyValueStore> LedgerReader for BlockTreeStore<Store> {
 
 impl<Store: KeyValueStore> LedgerWriter for BlockTreeStore<Store> {
     fn set_balance(&mut self, address: &PublicKey, balance: Balance)
-                   -> SimplesResult<()> {
+                   -> IroncResult<()> {
         let db_key = format_balance_key(address);
         self.store.set_message(db_key.as_bytes(), &balance)
     }

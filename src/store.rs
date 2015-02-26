@@ -8,11 +8,11 @@ use std::vec;
 use protobuf::{self, MessageStatic};
 use self::rocksdb::{RocksDB, RocksDBResult};
 
-use error::SimplesResult;
+use error::IroncResult;
 
 pub trait KeyValueStore {
-    fn get_bytes(&self, key: &[u8]) -> SimplesResult<Option<Vec<u8>>>;
-    fn set_bytes(&mut self, key: &[u8], value: &[u8]) -> SimplesResult<()>;
+    fn get_bytes(&self, key: &[u8]) -> IroncResult<Option<Vec<u8>>>;
+    fn set_bytes(&mut self, key: &[u8], value: &[u8]) -> IroncResult<()>;
 }
 
 pub struct RocksStore {
@@ -20,7 +20,7 @@ pub struct RocksStore {
 }
 
 impl RocksStore {
-    pub fn new(db_path: &str) -> SimplesResult<Self> {
+    pub fn new(db_path: &str) -> IroncResult<Self> {
         let db = try!(RocksDB::open_default(db_path));
         Ok(RocksStore { db: db })
     }
@@ -33,7 +33,7 @@ impl Drop for RocksStore {
 }
 
 impl KeyValueStore for RocksStore {
-    fn get_bytes(&self, key: &[u8]) -> SimplesResult<Option<Vec<u8>>> {
+    fn get_bytes(&self, key: &[u8]) -> IroncResult<Option<Vec<u8>>> {
         match self.db.get(key) {
             RocksDBResult::Some(bytes) => // TODO: Remove copy.
                 Ok(Some(vec::as_vec(bytes.deref()).clone())),
@@ -42,20 +42,20 @@ impl KeyValueStore for RocksStore {
         }
     }
 
-    fn set_bytes(&mut self, key: &[u8], value: &[u8]) -> SimplesResult<()> {
+    fn set_bytes(&mut self, key: &[u8], value: &[u8]) -> IroncResult<()> {
         Ok(try!(self.db.put(key, value)))
     }
 }
 
 impl KeyValueStore for HashMap<Vec<u8>, Vec<u8>> {
-    fn get_bytes(&self, key: &[u8]) -> SimplesResult<Option<Vec<u8>>> {
+    fn get_bytes(&self, key: &[u8]) -> IroncResult<Option<Vec<u8>>> {
         Ok(match self.get(&key.to_vec()) {
             Some(bytes) => Some(bytes.clone()),
             None => None
         })
     }
 
-    fn set_bytes(&mut self, key: &[u8], value: &[u8]) -> SimplesResult<()> {
+    fn set_bytes(&mut self, key: &[u8], value: &[u8]) -> IroncResult<()> {
         self.insert(key.to_vec(), value.to_vec());
         Ok(())
     }
@@ -63,9 +63,9 @@ impl KeyValueStore for HashMap<Vec<u8>, Vec<u8>> {
 
 pub trait ProtobufStore {
     fn get_message<Message: MessageStatic>(
-        &self, key: &[u8]) -> SimplesResult<Option<Message>>;
+        &self, key: &[u8]) -> IroncResult<Option<Message>>;
     fn set_message<Message: MessageStatic>
-        (&mut self, key: &[u8], message: &Message) -> SimplesResult<()>;
+        (&mut self, key: &[u8], message: &Message) -> IroncResult<()>;
 }
 
 pub struct MessageStore<Store: KeyValueStore> {
@@ -78,7 +78,7 @@ impl<Store: KeyValueStore> MessageStore<Store> {
 
 impl<Store: KeyValueStore> ProtobufStore for MessageStore<Store> {
     fn get_message<Message: MessageStatic>
-        (&self, key: &[u8]) -> SimplesResult<Option<Message>> {
+        (&self, key: &[u8]) -> IroncResult<Option<Message>> {
         Ok(match try!(self.kv_store.get_bytes(key)) {
             Some(bytes) => Some(try!(protobuf::parse_from_bytes(&bytes))),
             None => None
@@ -86,7 +86,7 @@ impl<Store: KeyValueStore> ProtobufStore for MessageStore<Store> {
     }
 
     fn set_message<Message: MessageStatic>
-        (&mut self, key: &[u8], message: &Message) -> SimplesResult<()>
+        (&mut self, key: &[u8], message: &Message) -> IroncResult<()>
     {
         let msg_bytes = &try!(message.write_to_bytes());
         Ok(try!(self.kv_store.set_bytes(key, msg_bytes)))
@@ -94,11 +94,11 @@ impl<Store: KeyValueStore> ProtobufStore for MessageStore<Store> {
 }
 
 impl<Store: KeyValueStore> KeyValueStore for MessageStore<Store> {
-    fn get_bytes(&self, key: &[u8]) -> SimplesResult<Option<Vec<u8>>> {
+    fn get_bytes(&self, key: &[u8]) -> IroncResult<Option<Vec<u8>>> {
         self.kv_store.get_bytes(key)
     }
 
-    fn set_bytes(&mut self, key: &[u8], value: &[u8]) -> SimplesResult<()> {
+    fn set_bytes(&mut self, key: &[u8], value: &[u8]) -> IroncResult<()> {
         self.kv_store.set_bytes(key, value)
     }
 }

@@ -10,14 +10,14 @@ use uuid::Uuid;
 use block::{HashedBlockExt, SignedBlockExt};
 use blocktree::BlockTreeStore;
 use crypto::HashDigest;
-use error::{SimplesError, SimplesResult};
+use error::{IroncError, IroncResult};
 use nanomsg::{Endpoint, Protocol, Socket};
-use simples_pb::{self, HashedBlock, GetBlocksRequest,
-                 GetBlocksResponse, GetBlocktreeRequest,
-                 GetBlocktreeResponse, PubBlockRequest,
-                 PubBlockResponse, PubTransactionRequest,
-                 PubTransactionResponse, RpcRequest, RpcResponse,
-                 RpcRequest_Method, SignedRpcRequest, Transaction};
+use ironcoin_pb::{self, HashedBlock, GetBlocksRequest,
+                  GetBlocksResponse, GetBlocktreeRequest,
+                  GetBlocktreeResponse, PubBlockRequest,
+                  PubBlockResponse, PubTransactionRequest,
+                  PubTransactionResponse, RpcRequest, RpcResponse,
+                  RpcRequest_Method, SignedRpcRequest, Transaction};
 use staking::BlockTemplate;
 use store::RocksStore;
 use tx::TransactionExt;
@@ -52,33 +52,33 @@ pub fn wrap_pub_transaction_request(request: PubTransactionRequest) -> RpcReques
 
 pub trait RpcService {
     fn get_blocks(&mut self, request: GetBlocksRequest) ->
-        SimplesResult<GetBlocksResponse>;
+        IroncResult<GetBlocksResponse>;
     fn get_blocktree(&mut self, request: GetBlocktreeRequest) ->
-        SimplesResult<GetBlocktreeResponse>;
+        IroncResult<GetBlocktreeResponse>;
     fn pub_block(&mut self, request: PubBlockRequest) ->
-        SimplesResult<PubBlockResponse>;
+        IroncResult<PubBlockResponse>;
     fn pub_transaction(&mut self, request: PubTransactionRequest) ->
-        SimplesResult<PubTransactionResponse>;
+        IroncResult<PubTransactionResponse>;
 }
 
 pub trait StakerService {
     fn on_successful_stake(&mut self, template: BlockTemplate)
-                           -> SimplesResult<()>;
+                           -> IroncResult<()>;
 }
 
 pub trait HeadBlockPubService {
     fn get_pub_endpoint(&self) -> &str;
-    fn current_head_block(&self) -> SimplesResult<HashedBlock>;
+    fn current_head_block(&self) -> IroncResult<HashedBlock>;
 }
 
 pub trait SyncBlocktree {
     fn on_peer_blocktree_update(&mut self, response: GetBlocktreeResponse)
-                                -> SimplesResult<Option<RpcRequest>>;
+                                -> IroncResult<Option<RpcRequest>>;
     fn on_received_peer_blocks(&mut self, response: GetBlocksResponse)
-                               -> SimplesResult<Option<RpcRequest>>;
+                               -> IroncResult<Option<RpcRequest>>;
 }
 
-pub struct SimplesService {
+pub struct IroncService {
     blocktree: BlockTreeStore<RocksStore>,
     pending_transactions: Vec<Transaction>,
     pub_block_socket: Socket,
@@ -86,15 +86,15 @@ pub struct SimplesService {
     pub_block_endpoint_str: String
 }
 
-impl SimplesService {
+impl IroncService {
     pub fn new(blocktree: BlockTreeStore<RocksStore>)
-               -> SimplesResult<SimplesService> {
+               -> IroncResult<IroncService> {
         println!("Head block: {}", blocktree.get_head_hash().unwrap());
 
         let pub_endpoint_str = format!("inproc://{}", Uuid::new_v4().to_string());
         let mut pub_socket = try!(Socket::new(Protocol::Pub));
         let pub_endpoint = try!(pub_socket.bind(&pub_endpoint_str));
-        Ok(SimplesService {
+        Ok(IroncService {
             blocktree: blocktree,
             pending_transactions: vec![],
             pub_block_socket: pub_socket,
@@ -110,14 +110,14 @@ impl SimplesService {
         self.pending_transactions = pending;
     }
 
-    fn publish_new_head(&mut self, head: &HashedBlock) -> SimplesResult<()> {
+    fn publish_new_head(&mut self, head: &HashedBlock) -> IroncResult<()> {
         let head_bytes = &try!(head.write_to_bytes());
         try!(self.pub_block_socket.nb_write(&head_bytes));
 
         Ok(())
     }
 
-    fn set_head(&mut self, head: &HashedBlock) -> SimplesResult<()> {
+    fn set_head(&mut self, head: &HashedBlock) -> IroncResult<()> {
         let head_hash = try!(head.decode_hash());
         let previous_hash = try!(head.decode_previous());
         try!(self.blocktree.set_head(&head_hash));
@@ -139,13 +139,13 @@ Timestamp: {}
     }
 }
 
-impl StakerService for SimplesService {
+impl StakerService for IroncService {
     fn on_successful_stake(&mut self, template: BlockTemplate)
-                           -> SimplesResult<()>
+                           -> IroncResult<()>
     {
         let head_hash = try!(self.blocktree.get_head_hash());
         let previous_block = try!(try!(self.blocktree.get_block(
-            &template.previous_block)).ok_or(SimplesError::new(&format!(
+            &template.previous_block)).ok_or(IroncError::new(&format!(
                 "previous for staked block {} is missing from kv-store",
                 template.previous_block))));
         if template.previous_block != head_hash {
@@ -183,19 +183,19 @@ impl StakerService for SimplesService {
     }
 }
 
-impl HeadBlockPubService for SimplesService {
+impl HeadBlockPubService for IroncService {
     fn get_pub_endpoint(&self) -> &str { &self.pub_block_endpoint_str }
 
-    fn current_head_block(&self) -> SimplesResult<HashedBlock> {
+    fn current_head_block(&self) -> IroncResult<HashedBlock> {
         self.blocktree.get_head()
     }
 }
 
-impl RpcService for SimplesService {
+impl RpcService for IroncService {
     fn get_blocks(&mut self, mut request: GetBlocksRequest) ->
-        SimplesResult<GetBlocksResponse>
+        IroncResult<GetBlocksResponse>
     {
-        use simples_pb::GetBlocksResponse_Status as ResponseStatus;
+        use ironcoin_pb::GetBlocksResponse_Status as ResponseStatus;
         let mut response = GetBlocksResponse::new();
         response.set_status(ResponseStatus::OK);
         let mut blocks = vec![];
@@ -224,9 +224,9 @@ impl RpcService for SimplesService {
     }
 
     fn get_blocktree(&mut self, request: GetBlocktreeRequest) ->
-        SimplesResult<GetBlocktreeResponse>
+        IroncResult<GetBlocktreeResponse>
     {
-        use simples_pb::GetBlocktreeResponse_Status as ResponseStatus;
+        use ironcoin_pb::GetBlocktreeResponse_Status as ResponseStatus;
         let mut response = GetBlocktreeResponse::new();
         let mut block_pointer = try!(self.blocktree.get_head());
         response.set_status(ResponseStatus::OK);
@@ -252,8 +252,8 @@ impl RpcService for SimplesService {
     }
 
     fn pub_block(&mut self, request: PubBlockRequest) ->
-        SimplesResult<PubBlockResponse> {
-        use simples_pb::PubBlockResponse_Status as ResponseStatus;
+        IroncResult<PubBlockResponse> {
+        use ironcoin_pb::PubBlockResponse_Status as ResponseStatus;
         println!("Got a pub_block request!");
 
         let mut response = PubBlockResponse::new();
@@ -276,7 +276,7 @@ impl RpcService for SimplesService {
             return Ok(response);
         }
 
-        let maybe_prev_head: SimplesResult<HashDigest> =
+        let maybe_prev_head: IroncResult<HashDigest> =
                 HashDigest::from_slice(hashed_block.get_block().get_previous());
         if maybe_prev_head.is_err() {
             println!("Received a block with invalid previous from peer");
@@ -288,8 +288,8 @@ impl RpcService for SimplesService {
     }
 
     fn pub_transaction(&mut self, mut request: PubTransactionRequest)
-                       -> SimplesResult<PubTransactionResponse> {
-        use simples_pb::PubTransactionResponse_Status as ResponseStatus;
+                       -> IroncResult<PubTransactionResponse> {
+        use ironcoin_pb::PubTransactionResponse_Status as ResponseStatus;
 
         let mut response = PubTransactionResponse::new();
         if !request.has_transaction() {
@@ -326,9 +326,9 @@ impl RpcService for SimplesService {
     }
 }
 
-impl SyncBlocktree for SimplesService {
+impl SyncBlocktree for IroncService {
     fn on_peer_blocktree_update(&mut self, mut response: GetBlocktreeResponse)
-                                -> SimplesResult<Option<RpcRequest>>
+                                -> IroncResult<Option<RpcRequest>>
     {
         let head = try!(self.blocktree.get_head());
         println!("Got blocktree state from peer with heights={}..{} / \
@@ -381,7 +381,7 @@ impl SyncBlocktree for SimplesService {
     }
 
     fn on_received_peer_blocks(&mut self, mut response: GetBlocksResponse)
-                               -> SimplesResult<Option<RpcRequest>>
+                               -> IroncResult<Option<RpcRequest>>
     {
         println!("Received {} blocks from peer.", response.get_blocks().len());
         let mut new_head = try!(self.blocktree.get_head());
@@ -403,7 +403,7 @@ pub struct Client {
 }
 
 impl Client {
-    pub fn new(endpoint_str: &str) -> SimplesResult<Client> {
+    pub fn new(endpoint_str: &str) -> IroncResult<Client> {
         let mut socket = try!(Socket::new(Protocol::Req));
         Ok(Client {
             endpoint_str: String::from_str(endpoint_str),
@@ -413,7 +413,7 @@ impl Client {
     }
 
     fn dispatch(&mut self, request: &SignedRpcRequest)
-                -> SimplesResult<RpcResponse> {
+                -> IroncResult<RpcResponse> {
         let request_bytes = try!(request.write_to_bytes());
         try!(self.socket.write_all(&request_bytes));
 
@@ -429,7 +429,7 @@ impl Drop for Client {
 
 impl RpcService for Client {
     fn get_blocks(&mut self, request: GetBlocksRequest) ->
-        SimplesResult<GetBlocksResponse> {
+        IroncResult<GetBlocksResponse> {
         let mut signed_request = SignedRpcRequest::new();
         signed_request.set_request(wrap_get_blocks_request(request));
         self.dispatch(&signed_request).map(
@@ -437,7 +437,7 @@ impl RpcService for Client {
     }
 
     fn get_blocktree(&mut self, request: GetBlocktreeRequest) ->
-        SimplesResult<GetBlocktreeResponse> {
+        IroncResult<GetBlocktreeResponse> {
         let mut signed_request = SignedRpcRequest::new();
         signed_request.set_request(wrap_get_blocktree_request(request));
         self.dispatch(&signed_request).map(
@@ -445,7 +445,7 @@ impl RpcService for Client {
     }
 
     fn pub_block(&mut self, request: PubBlockRequest) ->
-        SimplesResult<PubBlockResponse> {
+        IroncResult<PubBlockResponse> {
         let mut signed_request = SignedRpcRequest::new();
         signed_request.set_request(wrap_pub_block_request(request));
         self.dispatch(&signed_request).map(
@@ -453,7 +453,7 @@ impl RpcService for Client {
     }
 
     fn pub_transaction(&mut self, request: PubTransactionRequest) ->
-        SimplesResult<PubTransactionResponse> {
+        IroncResult<PubTransactionResponse> {
         let mut signed_request = SignedRpcRequest::new();
         signed_request.set_request(wrap_pub_transaction_request(request));
         self.dispatch(&signed_request).map(

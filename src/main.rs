@@ -22,7 +22,7 @@ mod crypto;
 mod error;
 mod app;
 mod service;
-mod simples_pb;
+mod ironcoin_pb;
 mod staking;
 mod store;
 mod tx;
@@ -41,34 +41,34 @@ use rustc_serialize::base64::{self, FromBase64, ToBase64};
 use block::GenesisBuilder;
 use blocktree::BlockTreeStore;
 use crypto::PublicKey;
-use error::{SimplesResult, SimplesError};
-use service::{RpcService, SimplesService};
-use simples_pb::HashedBlock;
+use error::{IroncResult, IroncError};
+use service::{RpcService, IroncService};
+use ironcoin_pb::HashedBlock;
 use store::RocksStore;
 use wallet::{load_proto_from_file, WalletExt, WalletKeypairExt};
 
 fn create_genesis_block_from_cmdline(tx_strs: &[String])
-                                     -> SimplesResult<HashedBlock>
+                                     -> IroncResult<HashedBlock>
 {
     let mut builder = GenesisBuilder::new();
     for tx_str in tx_strs.iter() {
         let transfer_parts: Vec<&str> = tx_str.split_str(":").collect();
         if transfer_parts.len() != 2 {
-            return Err(SimplesError::new(
+            return Err(IroncError::new(
                 "A genesis transfer needs to be specified as ADDR:AMOUNT"));
         };
 
         let maybe_destination =
             PublicKey::from_slice(&try!(FromBase64::from_base64(transfer_parts[0])));
         if maybe_destination.is_err() {
-            return Err(SimplesError::new(&format!(
+            return Err(IroncError::new(&format!(
                 "Could not parse \"{}\" as an address.", transfer_parts[0])));
         }
         let destination = maybe_destination.unwrap();
 
         let maybe_amount = FromStr::from_str(transfer_parts[1]);
         if maybe_amount.is_err() {
-            return Err(SimplesError::new(&format!(
+            return Err(IroncError::new(&format!(
                 "Could not parse \"{}\" as an amount.", transfer_parts[1])));
         }
         let amount: u64 = maybe_amount.unwrap();
@@ -78,7 +78,7 @@ fn create_genesis_block_from_cmdline(tx_strs: &[String])
 }
 
 fn create_block_store(block_db: &str, genesis: Option<HashedBlock>) ->
-    SimplesResult<BlockTreeStore<RocksStore>> {
+    IroncResult<BlockTreeStore<RocksStore>> {
     BlockTreeStore::new(try!(RocksStore::new(block_db)), genesis)
 }
 
@@ -127,7 +127,7 @@ used multiple times to specify genesis transactions.", "ADDR:AMOUNT");
 
     let rpc_endpoint = matches.opt_str("d")
         .unwrap_or(String::from_str(DEFAULT_ENDPOINT));
-    let mut wallet = simples_pb::Wallet::new();
+    let mut wallet = ironcoin_pb::Wallet::new();
     if matches.opt_present("f") {
         let wallet_file = matches.opt_str("f").unwrap();
         println!("Reading wallet from file: {}", wallet_file);
@@ -224,7 +224,7 @@ used multiple times to specify genesis transactions.", "ADDR:AMOUNT");
         }
         for peer in peers.iter() {
             let mut client = service::Client::new(peer).unwrap();
-            let mut request = simples_pb::PubTransactionRequest::new();
+            let mut request = ironcoin_pb::PubTransactionRequest::new();
             request.set_transaction(transaction.clone());
             let response = client.pub_transaction(request).ok().unwrap();
             println!("Response status: {:?}", response);
@@ -276,7 +276,7 @@ used multiple times to specify genesis transactions.", "ADDR:AMOUNT");
         };
 
         let service =
-            SimplesService::new(blocktree).unwrap();
+            IroncService::new(blocktree).unwrap();
         let mut app =
             app::Application::new(rpc_endpoint, service, peers, wallet).unwrap();
         app.run().unwrap();

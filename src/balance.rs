@@ -4,16 +4,16 @@ use std::fmt;
 
 use crypto::PublicKey;
 use block::HashedBlockExt;
-use error::{SimplesError, SimplesResult};
-use simples_pb::{Balance, BalancePatch, HashedBlock, Transaction, Transfer};
+use error::{IroncError, IroncResult};
+use ironcoin_pb::{Balance, BalancePatch, HashedBlock, Transaction, Transfer};
 
 pub trait BalancePatchExt {
-    fn decode_public_key(&self) -> SimplesResult<PublicKey>;
+    fn decode_public_key(&self) -> IroncResult<PublicKey>;
     fn reverse(&self) -> Self;
 }
 
 impl BalancePatchExt for BalancePatch {
-    fn decode_public_key(&self) -> SimplesResult<PublicKey> {
+    fn decode_public_key(&self) -> IroncResult<PublicKey> {
         PublicKey::from_slice(&self.get_public_key())
     }
 
@@ -27,25 +27,25 @@ impl BalancePatchExt for BalancePatch {
 }
 
 pub trait LedgerReader {
-    fn get_balance(&self, address: &PublicKey) -> SimplesResult<Balance>;
+    fn get_balance(&self, address: &PublicKey) -> IroncResult<Balance>;
 }
 
 pub trait LedgerWriter {
     fn set_balance(&mut self, address: &PublicKey, balance: Balance)
-                   -> SimplesResult<()>;
+                   -> IroncResult<()>;
 }
 
 pub trait Patchable {
-    fn apply_patch(&mut self, patch: BalancePatch) -> SimplesResult<()>;
+    fn apply_patch(&mut self, patch: BalancePatch) -> IroncResult<()>;
 }
 
 impl<LedgerMutator: LedgerReader + LedgerWriter>
     Patchable for LedgerMutator {
-    fn apply_patch(&mut self, patch: BalancePatch) -> SimplesResult<()> {
+    fn apply_patch(&mut self, patch: BalancePatch) -> IroncResult<()> {
         let public_key = try!(PublicKey::from_slice(patch.get_public_key()));
         let before_balance = try!(self.get_balance(&public_key));
         if before_balance != *patch.get_before() {
-            return Err(SimplesError::new(&format!(
+            return Err(IroncError::new(&format!(
                 "Actual initial balance ({}, {}) != ({}, {}) from the patch.",
                 before_balance.get_tokens(), before_balance.get_op_index(),
                 patch.get_before().get_tokens(),
@@ -77,7 +77,7 @@ impl<'a, L: 'a + LedgerReader> LedgerSnapshot<'a, L> {
     }
 
     pub fn add_transfer(&mut self, transfer: &Transfer) ->
-        SimplesResult<()>
+        IroncResult<()>
     {
         let source_pk = try!(PublicKey::from_slice(transfer.get_source_pk()));
         let destination_pk =
@@ -107,13 +107,13 @@ impl<'a, L: 'a + LedgerReader> LedgerSnapshot<'a, L> {
                 try!(self.set_balance(&destination_pk, destination));
                 Ok(())
             } else {
-                Err(SimplesError::new(&format!(
+                Err(IroncError::new(&format!(
                     "Wrong op number for source address {}: op_index was \
                      {} != {} (required)", source_pk, transfer.get_op_index(),
                     source.get_op_index())))
             }
         } else {
-            Err(SimplesError::new(&format!(
+            Err(IroncError::new(&format!(
                 "Not enough funds. Source address balance is {} but \
                  {} tokens were transferred: {} -> {}", source.get_tokens(),
                 transfer.get_tokens(), source_pk, destination_pk)))
@@ -121,14 +121,14 @@ impl<'a, L: 'a + LedgerReader> LedgerSnapshot<'a, L> {
     }
 
     pub fn apply_transaction(
-        &mut self, transaction: &Transaction) -> SimplesResult<()> {
+        &mut self, transaction: &Transaction) -> IroncResult<()> {
         for transfer in transaction.get_commit().get_transfers().iter() {
             try!(self.add_transfer(transfer));
         }
         Ok(())
     }
 
-    pub fn apply_block(&mut self, block: &HashedBlock) -> SimplesResult<()> {
+    pub fn apply_block(&mut self, block: &HashedBlock) -> IroncResult<()> {
         for transaction in block.get_block().get_transactions().iter() {
             try!(self.apply_transaction(transaction));
         }
@@ -153,7 +153,7 @@ impl<'a, L: 'a + LedgerReader> fmt::Debug for LedgerSnapshot<'a, L> {
 }
 
 impl<'a, L: 'a + LedgerReader> LedgerReader for LedgerSnapshot<'a, L> {
-    fn get_balance(&self, address: &PublicKey) -> SimplesResult<Balance> {
+    fn get_balance(&self, address: &PublicKey) -> IroncResult<Balance> {
         match self.cache.borrow_mut().entry(address.clone()) {
             hash_map::Entry::Occupied(occupied_patch) =>
                 Ok(occupied_patch.get().get_after().clone()),
@@ -173,7 +173,7 @@ impl<'a, L: 'a + LedgerReader> LedgerReader for LedgerSnapshot<'a, L> {
 impl<'a, LedgerReadOnly: 'a + LedgerReader> LedgerWriter
     for LedgerSnapshot<'a, LedgerReadOnly> {
     fn set_balance(&mut self, address: &PublicKey, balance: Balance)
-                   -> SimplesResult<()> {
+                   -> IroncResult<()> {
         match self.cache.borrow_mut().entry(address.clone()) {
             hash_map::Entry::Occupied(mut occupied_patch) => {
                 occupied_patch.get_mut().set_after(balance);
@@ -199,23 +199,23 @@ struct TestLedgerOneAddress {
 }
 
 impl LedgerReader for TestLedgerOneAddress {
-    fn get_balance(&self, address: &PublicKey) -> SimplesResult<Balance> {
+    fn get_balance(&self, address: &PublicKey) -> IroncResult<Balance> {
         if self.address == *address {
             Ok(self.balance.clone())
         } else {
-            Err(SimplesError::new(""))
+            Err(IroncError::new(""))
         }
     }
 }
 
 impl LedgerWriter for TestLedgerOneAddress {
     fn set_balance(&mut self, address: &PublicKey, balance: Balance)
-                   -> SimplesResult<()> {
+                   -> IroncResult<()> {
         if self.address == *address {
             self.balance = balance;
             Ok(())
         } else {
-            Err(SimplesError::new(""))
+            Err(IroncError::new(""))
         }
     }
 }
@@ -225,7 +225,7 @@ struct TestLedgerHashMap {
 }
 
 impl LedgerReader for TestLedgerHashMap {
-    fn get_balance(&self, address: &PublicKey) -> SimplesResult<Balance> {
+    fn get_balance(&self, address: &PublicKey) -> IroncResult<Balance> {
         match self.ledger.borrow_mut().entry(address.clone()) {
             hash_map::Entry::Occupied(occupied) => Ok(occupied.get().clone()),
             hash_map::Entry::Vacant(vacant) => {

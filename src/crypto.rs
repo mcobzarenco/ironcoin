@@ -10,7 +10,7 @@ use sodiumoxide::crypto::hash::sha512::{self, HASHBYTES};
 use sodiumoxide::crypto::sign::ed25519::{
     self, PUBLICKEYBYTES, SECRETKEYBYTES, SIGNATUREBYTES};
 
-use error::{SimplesError, SimplesResult};
+use error::{IroncError, IroncResult};
 
 // HashDigest:
 
@@ -19,9 +19,9 @@ pub struct HashDigest(pub [u8; HASHBYTES]);
 impl HashDigest {
     pub fn as_slice(&self) -> &[u8] { &self.0 }
 
-    pub fn from_slice(bytes: &[u8]) -> SimplesResult<HashDigest> {
+    pub fn from_slice(bytes: &[u8]) -> IroncResult<HashDigest> {
         if bytes.len() != HASHBYTES {
-            Err(SimplesError::new(&format!(
+            Err(IroncError::new(&format!(
                 "Invalid length for a hash {} != {} (required).",
                 bytes.len(), HASHBYTES)))
         } else {
@@ -121,9 +121,9 @@ pub struct PublicKey(pub [u8; PUBLICKEYBYTES]);
 impl PublicKey {
     pub fn as_slice(&self) -> &[u8] { &self.0 }
 
-    pub fn from_slice(bytes: &[u8]) -> SimplesResult<PublicKey> {
+    pub fn from_slice(bytes: &[u8]) -> IroncResult<PublicKey> {
         if bytes.len() != PUBLICKEYBYTES {
-            Err(SimplesError::new(
+            Err(IroncError::new(
                 &format!("Invalid public key length {} != {} (required)",
                          bytes.len(), PUBLICKEYBYTES)))
         } else {
@@ -147,9 +147,9 @@ pub struct SecretKey(pub [u8; SECRETKEYBYTES]);
 impl SecretKey {
     pub fn as_slice(&self) -> &[u8] { &self.0 }
 
-    pub fn from_slice(bytes: &[u8]) -> SimplesResult<SecretKey> {
+    pub fn from_slice(bytes: &[u8]) -> IroncResult<SecretKey> {
         if bytes.len() != SECRETKEYBYTES {
-            Err(SimplesError::new(
+            Err(IroncError::new(
                 &format!("Invalid secret key length {} != {} (required)",
                          bytes.len(), SECRETKEYBYTES)))
         } else {
@@ -204,9 +204,9 @@ pub struct Signature(pub [u8; SIGNATUREBYTES]);
 impl Signature {
     pub fn as_slice(&self) -> &[u8] { &self.0 }
 
-    pub fn from_slice(bytes: &[u8]) -> SimplesResult<Signature> {
+    pub fn from_slice(bytes: &[u8]) -> IroncResult<Signature> {
         if bytes.len() != SIGNATUREBYTES {
-            Err(SimplesError::new(
+            Err(IroncError::new(
                 &format!("Invalid signature length {} != {} (required)",
                          bytes.len(), SIGNATUREBYTES)))
         } else {
@@ -250,11 +250,11 @@ pub fn sign(secret_key: &SecretKey, message: &[u8]) -> Signature {
 }
 
 pub fn verify_signature(public_key: &PublicKey, message: &[u8],
-                        signature: &Signature) -> SimplesResult<()> {
+                        signature: &Signature) -> IroncResult<()> {
     if ed25519::verify_detached(&ed25519::Signature(signature.0),
                                 message, &ed25519::PublicKey(public_key.0)) {
         Ok(())
-    } else { Err(SimplesError::new("Invalid signature.")) }
+    } else { Err(IroncError::new("Invalid signature.")) }
 }
 
 // Utilities for crypto on protobufs:
@@ -271,7 +271,7 @@ pub fn sign_message<M: MessageStatic>(
 
 pub fn verify_signed_message<M: MessageStatic>(
     public_key: &PublicKey, message: &M, signature: &Signature)
-    -> SimplesResult<()> {
+    -> IroncResult<()> {
     let msg_bytes: &[u8] = &message.write_to_bytes().unwrap();
     verify_signature(public_key, msg_bytes, signature)
 }

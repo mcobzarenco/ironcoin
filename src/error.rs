@@ -5,62 +5,62 @@ use nanomsg;
 use protobuf;
 use rustc_serialize;
 
-pub type SimplesResult<Msg> = Result<Msg, SimplesError>;
+pub type IroncResult<Msg> = Result<Msg, IroncError>;
 
 #[derive(Debug, Eq, PartialEq)]
-pub struct SimplesError {
+pub struct IroncError {
     description: String
 }
 
-impl SimplesError {
-    pub fn new(description: &str) -> SimplesError {
-        SimplesError { description: String::from_str(description) }
+impl IroncError {
+    pub fn new(description: &str) -> IroncError {
+        IroncError { description: String::from_str(description) }
     }
 }
 
-impl Display for SimplesError {
+impl Display for IroncError {
     fn fmt(&self, formatter: &mut Formatter) -> Result<(), fmt::Error> {
         formatter.write_str(&self.description)
     }
 }
 
-impl Error for SimplesError {
+impl Error for IroncError {
     fn description(&self) -> &str { &self.description }
 
     fn cause(&self) -> Option<&Error> { None }
 }
 
-// TODO: Use something like below (albeit with a SimplesErrorTrait)
+// TODO: Use something like below (albeit with a IroncErrorTrait)
 //       once Rust gets negative trait bounds
 //
-// impl<Error: ::std::error::Error + !SimplesError>
-//     FromError<Error> for SimplesError {
+// impl<Error: ::std::error::Error + !IroncError>
+//     FromError<Error> for IroncError {
 //
-//     fn from_error(err: Error) -> SimplesError {
-//         SimplesError { description: String::from_str(err.description()) }
+//     fn from_error(err: Error) -> IroncError {
+//         IroncError { description: String::from_str(err.description()) }
 //     }
 // }
 
-trait ConvertToSimplesError: Error {}
-impl ConvertToSimplesError for protobuf::error::ProtobufError {}
-impl ConvertToSimplesError for ::std::io::Error {}
-impl ConvertToSimplesError for rustc_serialize::json::EncoderError {}
-impl ConvertToSimplesError for rustc_serialize::base64::FromBase64Error {}
+trait ConvertToIroncError: Error {}
+impl ConvertToIroncError for protobuf::error::ProtobufError {}
+impl ConvertToIroncError for ::std::io::Error {}
+impl ConvertToIroncError for rustc_serialize::json::EncoderError {}
+impl ConvertToIroncError for rustc_serialize::base64::FromBase64Error {}
 
-impl<Err: ConvertToSimplesError> FromError<Err> for SimplesError {
-    fn from_error(err: Err) -> SimplesError {
-        SimplesError { description: String::from_str(err.description()) }
+impl<Err: ConvertToIroncError> FromError<Err> for IroncError {
+    fn from_error(err: Err) -> IroncError {
+        IroncError { description: String::from_str(err.description()) }
     }
 }
 
-impl FromError<nanomsg::NanoError> for SimplesError {
-    fn from_error(err: nanomsg::NanoError) -> SimplesError {
-        SimplesError { description: String::from_str(err.description) }
+impl FromError<nanomsg::NanoError> for IroncError {
+    fn from_error(err: nanomsg::NanoError) -> IroncError {
+        IroncError { description: String::from_str(err.description) }
     }
 }
 
-impl<'a> FromError<&'a str> for SimplesError {
-    fn from_error(err: &'a str) -> SimplesError {
-        SimplesError { description: String::from_str(err) }
+impl<'a> FromError<&'a str> for IroncError {
+    fn from_error(err: &'a str) -> IroncError {
+        IroncError { description: String::from_str(err) }
     }
 }

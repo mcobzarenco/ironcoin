@@ -7,11 +7,11 @@ use protobuf::{self, Message};
 
 use block::HashedBlockExt;
 use crypto::{gen_keypair, HashDigest, PublicKey, SecretKey, sign_message};
-use error::{SimplesError, SimplesResult};
+use error::{IroncError, IroncResult};
 use service::{HeadBlockPubService, RpcService, StakerService, SyncBlocktree,
               wrap_get_blocks_request, wrap_get_blocktree_request,
               wrap_pub_block_request, wrap_pub_transaction_request};
-use simples_pb::{self, HashedBlock, GetBlocksRequest,
+use ironcoin_pb::{self, HashedBlock, GetBlocksRequest,
                  GetBlocktreeRequest, PubBlockRequest,
                  PubTransactionResponse_Status, PubTransactionRequest,
                  PubTransactionResponse, RpcRequest, RpcRequest_Method,
@@ -35,7 +35,7 @@ impl<Service: HeadBlockPubService + RpcService + StakerService + SyncBlocktree>
     Application<Service> {
     pub fn new(endpoint: String, service: Service,
                peer_endpoints: Vec<String>, staking_keys: Wallet)
-               -> SimplesResult<Application<Service>>
+               -> IroncResult<Application<Service>>
     {
         let mut sub_head_socket = try!(Socket::new(Protocol::Sub));
         try!(sub_head_socket.subscribe(""));
@@ -64,7 +64,7 @@ impl<Service: HeadBlockPubService + RpcService + StakerService + SyncBlocktree>
     }
 
     fn dispatch(&mut self, mut request: RpcRequest)
-                    -> SimplesResult<RpcResponse>
+                    -> IroncResult<RpcResponse>
     {
         let mut response = RpcResponse::new();
         match request.get_method() {
@@ -92,16 +92,24 @@ impl<Service: HeadBlockPubService + RpcService + StakerService + SyncBlocktree>
                 Ok(response)
             },
             RpcRequest_Method::PUB_TRANSACTION => {
+                let inner_request = request.take_pub_transaction();
+                let inner_response =
+                    try!(self.service.pub_transaction(inner_request.clone()));
+                if inner_response.get_status() == PubTransactionResponse_Status::OK {
+                    for (index, peer) in self.peers.iter_mut().enumerate() {
+                        // peer.async_pub_transaction(
+                        //     inner_request.clone(), Some(&self.app_secret_key));
+                    }
+                }
                 response.set_status(RpcResponse_Status::OK);
-                response.set_pub_transaction(try!(
-                    self.service.pub_transaction(request.take_pub_transaction())));
+                response.set_pub_transaction(inner_response);
                 Ok(response)
             }
         }
     }
 
     fn handle_new_head_block(&mut self, new_head: HashedBlock)
-                             -> SimplesResult<()> {
+                             -> IroncResult<()> {
         self.staker.set_head_block(try!(new_head.decode_hash()),
                                    new_head.get_block().get_timestamp());
 
@@ -119,7 +127,7 @@ impl<Service: HeadBlockPubService + RpcService + StakerService + SyncBlocktree>
     }
 
     fn handle_peer_response(&mut self, peer_index: usize, mut response: RpcResponse)
-                            -> SimplesResult<()>
+                            -> IroncResult<()>
     {
         let mut maybe_reply = None;
         match response.get_original_request().get_request().get_method() {
@@ -148,7 +156,7 @@ impl<Service: HeadBlockPubService + RpcService + StakerService + SyncBlocktree>
     }
 
     fn handle_raw_rpc_request(&mut self, raw_request: &[u8])
-                              -> SimplesResult<RpcResponse> {
+                              -> IroncResult<RpcResponse> {
         let parse_result: protobuf::ProtobufResult<SignedRpcRequest> =
             protobuf::parse_from_bytes(&raw_request);
         match parse_result {
@@ -160,19 +168,19 @@ impl<Service: HeadBlockPubService + RpcService + StakerService + SyncBlocktree>
             }
             Err(err) => {
                 println!("[app loop] Failed to parse protobuf '{:?}'.", err);
-                let mut response = simples_pb::RpcResponse::new();
+                let mut response = ironcoin_pb::RpcResponse::new();
                 response.set_status(
-                    simples_pb::RpcResponse_Status::INVALID_MESSAGE);
+                    ironcoin_pb::RpcResponse_Status::INVALID_MESSAGE);
                 Ok(response)
             }
         }
     }
 
-    fn handle_timeout(&mut self) -> SimplesResult<()> {
+    fn handle_timeout(&mut self) -> IroncResult<()> {
         self.try_staking_a_new_block()
     }
 
-    fn probe_network_state(&mut self) -> SimplesResult<()> {
+    fn probe_network_state(&mut self) -> IroncResult<()> {
         let look_back = 10;
         let head_height = try!(self.service.current_head_block()).get_height();
         let start_height =
@@ -191,14 +199,14 @@ impl<Service: HeadBlockPubService + RpcService + StakerService + SyncBlocktree>
         Ok(())
     }
 
-    fn try_staking_a_new_block(&mut self) -> SimplesResult<()> {
+    fn try_staking_a_new_block(&mut self) -> IroncResult<()> {
         match try!(self.staker.stake_interval(STAKING_INTERVAL)) {
             Some(template) => self.service.on_successful_stake(template),
             None => Ok(())
         }
     }
 
-    pub fn run(&mut self) -> SimplesResult<()> {
+    pub fn run(&mut self) -> IroncResult<()> {
         let mut rpc_socket = try!(Socket::new(Protocol::Rep));
         try!(rpc_socket.bind(&self.endpoint));
 
@@ -245,7 +253,7 @@ impl<Service: HeadBlockPubService + RpcService + StakerService + SyncBlocktree>
                                      maybe_response.unwrap_err());
                             response = RpcResponse::new();
                             response.set_status(
-                                simples_pb::RpcResponse_Status::INTERNAL_ERROR);
+                                ironcoin_pb::RpcResponse_Status::INTERNAL_ERROR);
                         } else {
                             response = maybe_response.unwrap();
                         }
@@ -328,7 +336,7 @@ struct Peer {
 }
 
 impl Peer {
-    fn new(endpoint: String) -> SimplesResult<Peer> {
+    fn new(endpoint: String) -> IroncResult<Peer> {
         Ok(Peer {
             endpoint: endpoint,
             sockets: vec![]
@@ -351,11 +359,11 @@ impl Peer {
     }
 
     fn sign_and_send(&mut self, request: RpcRequest, key: Option<&SecretKey>)
-                     -> SimplesResult<()> {
+                     -> IroncResult<()> {
         self.send(&Peer::make_signed_request(request, key))
     }
 
-    fn send(&mut self, request: &SignedRpcRequest) -> SimplesResult<()> {
+    fn send(&mut self, request: &SignedRpcRequest) -> IroncResult<()> {
         let mut socket = try!(Socket::new(Protocol::Req));
         try!(socket.connect(&self.endpoint));
         let request_bytes = try!(request.write_to_bytes());
@@ -365,7 +373,7 @@ impl Peer {
     }
 
     fn recv(&mut self, check_sign: Option<&PublicKey>)
-            -> SimplesResult<Option<RpcResponse>> {
+            -> IroncResult<Option<RpcResponse>> {
         if self.sockets.len() == 0 { return Ok(None); }
         let mut response_bytes = vec![];
         for index in range(0, self.sockets.len()) {
@@ -389,22 +397,22 @@ impl Peer {
     }
 
     fn async_get_blocks(&mut self, request: GetBlocksRequest,
-                        key: Option<&SecretKey>) -> SimplesResult<()> {
+                        key: Option<&SecretKey>) -> IroncResult<()> {
         self.sign_and_send(wrap_get_blocks_request(request), key)
     }
 
     fn async_get_blocktree(&mut self, request: GetBlocktreeRequest,
-                           key: Option<&SecretKey>) -> SimplesResult<()> {
+                           key: Option<&SecretKey>) -> IroncResult<()> {
         self.sign_and_send(wrap_get_blocktree_request(request), key)
     }
 
     fn async_pub_block(&mut self, request: PubBlockRequest,
-                       key: Option<&SecretKey>) -> SimplesResult<()> {
+                       key: Option<&SecretKey>) -> IroncResult<()> {
         self.sign_and_send(wrap_pub_block_request(request), key)
     }
 
     fn async_pub_transaction(&mut self, request: PubTransactionRequest,
-                             key: Option<&SecretKey>) -> SimplesResult<()> {
+                             key: Option<&SecretKey>) -> IroncResult<()> {
         self.sign_and_send(wrap_pub_transaction_request(request), key)
     }
 }

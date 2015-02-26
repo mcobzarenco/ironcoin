@@ -1,10 +1,10 @@
 [package]
-name = "simples"
-version = "0.0.2"
+name = "ironcoin"
+version = "0.1.0"
 authors = ["Marius Cobzarenco <marius@reinfer.io>"]
 
-[dependencies.getopts2]
-git = "https://github.com/mcobzarenco/getopts.git"
+[dependencies.getopts]
+git = "https://github.com/rust-lang/getopts.git"
 
 [dependencies.nanomsg]
 git = "https://github.com/blabaere/nanomsg.rs.git"
@@ -16,7 +16,8 @@ git = "https://github.com/stepancheg/rust-protobuf.git"
 git = "https://github.com/spacejam/rust-rocksdb.git"
 
 [dependencies.rustc-serialize]
-git = "https://github.com/rust-lang/rustc-serialize.git"
+git = "https://github.com/zonyitoo/rustc-serialize.git"
+# # git = "https://github.com/rust-lang/rustc-serialize.git"
 
 [dependencies.uuid]
 git = "https://github.com/rust-lang/uuid.git"

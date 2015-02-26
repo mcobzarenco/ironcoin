@@ -3,8 +3,8 @@ use std::cmp::max;
 use time::now_utc;
 
 use crypto::{hash, HashDigest, PublicKey, SecretKey};
-use error::SimplesResult;
-use simples_pb::Wallet;
+use error::IroncResult;
+use ironcoin_pb::Wallet;
 use wallet::{self, WalletKeypairExt};
 
 // #[derive(Clone, Eq, PartialEq, Debug)]
@@ -56,7 +56,7 @@ impl Staker {
     }
 
     pub fn stake_interval(&mut self, staking_interval: i64)
-                          -> SimplesResult<Option<BlockTemplate>> {
+                          -> IroncResult<Option<BlockTemplate>> {
         let max_timestamp = max(self.untried_timestamp + staking_interval,
                                 now_utc().to_timespec().sec + 1);
         let interval = range(self.untried_timestamp, max_timestamp);

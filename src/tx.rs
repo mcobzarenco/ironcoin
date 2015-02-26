@@ -1,18 +1,17 @@
 use std::collections::HashMap;
-use std::vec;
 
 use protobuf::Message;
 
 use crypto::{PublicKey, SecretKey, Signature, sign, verify_signature};
-use simples_pb::{Commitment, DetachedSignature, Transaction, Transfer};
-use error::{SimplesError, SimplesResult};
+use ironcoin_pb::{Commitment, DetachedSignature, Transaction, Transfer};
+use error::{IroncError, IroncResult};
 
 pub trait TransactionExt {
-    fn verify_signatures(&self) -> SimplesResult<()>;
+    fn verify_signatures(&self) -> IroncResult<()>;
 }
 
 impl TransactionExt for Transaction {
-    fn verify_signatures(&self) -> SimplesResult<()> {
+    fn verify_signatures(&self) -> IroncResult<()> {
         let commit_bytes = &try!(self.get_commit().write_to_bytes());
         let mut sign_map = HashMap::<&[u8], &[u8]>::new();
         for sign in self.get_signatures().iter() {
@@ -26,7 +25,7 @@ impl TransactionExt for Transaction {
                     let signature = try!(Signature::from_slice(sign_bytes));
                     try!(verify_signature(&public_key, commit_bytes, &signature));
                 },
-                None => return Err(SimplesError::new("Missing key."))
+                None => return Err(IroncError::new("Missing key."))
             }
         }
         Ok(())
@@ -71,7 +70,7 @@ impl TransactionBuilder {
         self
     }
 
-    pub fn build(self) -> SimplesResult<Transaction> {
+    pub fn build(self) -> IroncResult<Transaction> {
         let mut transaction = Transaction::new();
         let commit_bytes = &self.commit.write_to_bytes().unwrap();
         for (transfer, secret_key) in self.commit.get_transfers().iter()
@@ -87,7 +86,7 @@ impl TransactionBuilder {
                     transaction.mut_signatures().push(sign);
                 },
                 Err(_) => return Err(
-                    SimplesError::new("Invalid key for source account."))
+                    IroncError::new("Invalid key for source account."))
             }
         }
         transaction.set_commit(self.commit);

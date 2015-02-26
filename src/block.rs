@@ -2,14 +2,14 @@ use time::now_utc;
 
 use crypto::{HashDigest, PublicKey, SecretKey, Signature,
              gen_keypair, hash_message, sign_message, verify_signed_message};
-use error::{SimplesError, SimplesResult};
-use simples_pb::{Block, BlockWithDiff, HashedBlock, SignedBlock, Transaction};
+use error::{IroncError, IroncResult};
+use ironcoin_pb::{Block, BlockWithDiff, HashedBlock, SignedBlock, Transaction};
 use tx::{TransactionBuilder, TransactionExt};
 
 fn create_genesis_block(staker_pk: &PublicKey, staker_sk: &SecretKey,
-                        tx: Transaction) -> SimplesResult<HashedBlock> {
+                        tx: Transaction) -> IroncResult<HashedBlock> {
     if tx.get_commit().get_bounty() != 0 || tx.get_commit().has_bounty_pk() {
-        return Err(SimplesError::new(
+        return Err(IroncError::new(
             "Transactions must not have a bounty set in a genesis block."));
     }
     try!(tx.verify_signatures());
@@ -59,15 +59,15 @@ impl GenesisBuilder {
 
 pub trait HashedBlockExt {
     fn compute_hash(&mut self) -> HashDigest;
-    fn decode_hash(&self) -> SimplesResult<HashDigest>;
-    fn decode_previous(&self) -> SimplesResult<HashDigest>;
-    fn decode_proof(&self) -> SimplesResult<HashDigest>;
-    fn decode_staker_pk(&self) -> SimplesResult<PublicKey>;
+    fn decode_hash(&self) -> IroncResult<HashDigest>;
+    fn decode_previous(&self) -> IroncResult<HashDigest>;
+    fn decode_proof(&self) -> IroncResult<HashDigest>;
+    fn decode_staker_pk(&self) -> IroncResult<PublicKey>;
     fn get_block<'a>(&'a self) -> &'a Block;
     fn get_height(&self) -> u32;
     fn set_previous_block(&mut self, block_hash: &HashDigest);
-    fn verify_hash(&self) -> SimplesResult<()>;
-    fn verify(&self) -> SimplesResult<()>;
+    fn verify_hash(&self) -> IroncResult<()>;
+    fn verify(&self) -> IroncResult<()>;
 }
 
 impl HashedBlockExt for HashedBlock {
@@ -77,19 +77,19 @@ impl HashedBlockExt for HashedBlock {
         hash_digest
     }
 
-    fn decode_hash(&self) -> SimplesResult<HashDigest> {
+    fn decode_hash(&self) -> IroncResult<HashDigest> {
         HashDigest::from_slice(self.get_hash())
     }
 
-    fn decode_previous(&self) -> SimplesResult<HashDigest> {
+    fn decode_previous(&self) -> IroncResult<HashDigest> {
         self.get_block().decode_previous()
     }
 
-    fn decode_proof(&self) -> SimplesResult<HashDigest> {
+    fn decode_proof(&self) -> IroncResult<HashDigest> {
         self.get_block().decode_previous()
     }
 
-    fn decode_staker_pk(&self) -> SimplesResult<PublicKey> {
+    fn decode_staker_pk(&self) -> IroncResult<PublicKey> {
         self.get_block().decode_staker_pk()
     }
 
@@ -103,19 +103,19 @@ impl HashedBlockExt for HashedBlock {
         self.mut_signed_block().mut_block().set_previous(block_hash.0.to_vec())
     }
 
-    fn verify_hash(&self) -> SimplesResult<()> {
+    fn verify_hash(&self) -> IroncResult<()> {
         let block_hash = try!(HashDigest::from_slice(&self.get_hash()));
         try!(self.decode_previous());
 
         let computed_hash = hash_message(self.get_signed_block());
         if computed_hash == block_hash { Ok(()) }
-        else { Err(SimplesError::new(&format!(
+        else { Err(IroncError::new(&format!(
             "Block has invalid hash: {} != {} (actual)",
             block_hash, computed_hash)))
         }
     }
 
-    fn verify(&self) -> SimplesResult<()> {
+    fn verify(&self) -> IroncResult<()> {
         try!(self.verify_hash());
         try!(self.get_signed_block().verify_signature());
         let txes = self.get_block().get_transactions();
@@ -125,13 +125,13 @@ impl HashedBlockExt for HashedBlock {
 }
 
 pub trait SignedBlockExt {
-    fn decode_signature(&self) -> SimplesResult<Signature>;
+    fn decode_signature(&self) -> IroncResult<Signature>;
     fn sign(&mut self, secret_key: &SecretKey);
-    fn verify_signature(&self) -> SimplesResult<()>;
+    fn verify_signature(&self) -> IroncResult<()>;
 }
 
 impl SignedBlockExt for SignedBlock {
-    fn decode_signature(&self) -> SimplesResult<Signature> {
+    fn decode_signature(&self) -> IroncResult<Signature> {
         Signature::from_slice(self.get_signature())
     }
 
@@ -140,7 +140,7 @@ impl SignedBlockExt for SignedBlock {
         self.set_signature(signature.0.to_vec());
     }
 
-    fn verify_signature(&self) -> SimplesResult<()> {
+    fn verify_signature(&self) -> IroncResult<()> {
         let public_key = try!(self.get_block().decode_staker_pk());
         let signature = try!(self.decode_signature());
         verify_signed_message(&public_key, self.get_block(), &signature)
@@ -148,32 +148,32 @@ impl SignedBlockExt for SignedBlock {
 }
 
 pub trait BlockExt {
-    fn decode_previous(&self) -> SimplesResult<HashDigest>;
-    fn decode_staker_pk(&self) -> SimplesResult<PublicKey>;
+    fn decode_previous(&self) -> IroncResult<HashDigest>;
+    fn decode_staker_pk(&self) -> IroncResult<PublicKey>;
 }
 
 impl BlockExt for Block {
-    fn decode_previous(&self) -> SimplesResult<HashDigest> {
+    fn decode_previous(&self) -> IroncResult<HashDigest> {
         HashDigest::from_slice(self.get_previous())
     }
 
-    fn decode_staker_pk(&self) -> SimplesResult<PublicKey> {
+    fn decode_staker_pk(&self) -> IroncResult<PublicKey> {
         PublicKey::from_slice(self.get_staker_pk())
     }
 }
 
 pub trait BlockWithDiffExt {
-    fn decode_hash(&self) -> SimplesResult<HashDigest>;
-    fn decode_previous(&self) -> SimplesResult<HashDigest>;
+    fn decode_hash(&self) -> IroncResult<HashDigest>;
+    fn decode_previous(&self) -> IroncResult<HashDigest>;
     fn get_height(&self) -> u32;
 }
 
 impl BlockWithDiffExt for BlockWithDiff {
-    fn decode_hash(&self) -> SimplesResult<HashDigest> {
+    fn decode_hash(&self) -> IroncResult<HashDigest> {
         self.get_hashed_block().decode_hash()
     }
 
-    fn decode_previous(&self) -> SimplesResult<HashDigest> {
+    fn decode_previous(&self) -> IroncResult<HashDigest> {
         self.get_hashed_block().decode_previous()
     }
 
